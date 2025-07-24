@@ -1,0 +1,1029 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Supplier Selection Tool</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Inter Font (Tailwind default often uses system fonts, this ensures Inter) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+    <!-- React and ReactDOM CDNs -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel CDN for in-browser JSX compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- PDF Generation Libraries CDNs -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+<body class="bg-gray-50">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // React App Component
+        const App = () => {
+            // State for suppliers: [{ id: string, name: string }]
+            const [suppliers, setSuppliers] = React.useState([{ id: 's1', name: 'Supplier A' }]);
+
+            // State for objective criteria: [{ id: string, name: string, type: 'benefit' }]
+            const [objectiveCriteria, setObjectiveCriteria] = React.useState([
+                { id: 'oc1', name: 'Quality Score', type: 'benefit' },
+                { id: 'oc2', name: 'Unit Cost', type: 'cost' },
+            ]);
+
+            // State for subjective rating criteria: [{ id: string, name: string, type: 'benefit' }]
+            const [subjectiveRatingCriteria, setSubjectiveRatingCriteria] = React.useState([
+                { id: 'src1', name: 'Sustainability Rating', type: 'benefit' },
+                { id: 'src2', name: 'Relationship Quality', type: 'benefit' },
+            ]);
+
+            // State for objective data: { supplierId: { criterionId: value } }
+            const [objectiveData, setObjectiveData] = React.useState({
+                s1: { oc1: 90, oc2: 100, src1: 8, src2: 7 }, // Initial data for default supplier and criteria
+            });
+
+            // BWM specific states
+            const [bestCriterionId, setBestCriterionId] = React.useState('');
+            const [worstCriterionId, setWorstCriterionId] = React.useState('');
+            const [bestToOthersComparisons, setBestToOthersComparisons] = React.useState({}); // { criterionId: rating }
+            const [othersToWorstComparisons, setOthersToWorstComparisons] = React.useState({}); // { criterionId: rating }
+            const [bwmCalculatedSubjectiveWeights, setBwmCalculatedSubjectiveWeights] = React.useState({}); // { criterionId: weight }
+            const [isCalculatingBWM, setIsCalculatingBWM] = React.useState(false); // Loading state for BWM
+
+            // State for calculated results
+            const [results, setResults] = React.useState(null);
+            // State for error messages
+            const [error, setError] = React.useState('');
+            // State for showing a message box instead of alert
+            const [messageBox, setMessageBox] = React.useState({ show: false, title: '', message: '' });
+
+            // Backend URL (adjust if your Flask app runs on a different port/host)
+            const BACKEND_URL = 'http://127.0.0.1:5000'; // Default Flask development server URL - UPDATE THIS AFTER DEPLOYING BACKEND
+
+            // Utility function to show a custom message box
+            const showMessageBox = (title, message) => {
+                setMessageBox({ show: true, title, message });
+            };
+
+            // Utility function to close the custom message box
+            const closeMessageBox = () => {
+                setMessageBox({ show: false, title: '', message: '' });
+            };
+
+            // --- Supplier Management ---
+            const addSupplier = () => {
+                const newId = `s${suppliers.length + 1}`;
+                setSuppliers([...suppliers, { id: newId, name: `Supplier ${String.fromCharCode(65 + suppliers.length)}` }]);
+                setObjectiveData(prevData => {
+                    const newSupplierData = {};
+                    // Initialize data for all current criteria for the new supplier
+                    [...objectiveCriteria, ...subjectiveRatingCriteria].forEach(c => (newSupplierData[c.id] = 0));
+                    return { ...prevData, [newId]: newSupplierData };
+                });
+            };
+
+            const removeSupplier = (idToRemove) => {
+                if (suppliers.length <= 1) {
+                    showMessageBox('Cannot Remove', 'You must have at least one supplier.');
+                    return;
+                }
+                setSuppliers(suppliers.filter(s => s.id !== idToRemove));
+                setObjectiveData(prevData => {
+                    const newData = { ...prevData };
+                    delete newData[idToRemove];
+                    return newData;
+                });
+            };
+
+            const handleSupplierNameChange = (id, newName) => {
+                setSuppliers(suppliers.map(s => (s.id === id ? { ...s, name: newName } : s)));
+            };
+
+            // --- Criterion Management (General Helper) ---
+            const addCriterion = (type) => {
+                let newId;
+                let newCriterion;
+                if (type === 'objective') {
+                    newId = `oc${objectiveCriteria.length + 1}`;
+                    newCriterion = { id: newId, name: `Objective Criterion ${objectiveCriteria.length + 1}`, type: 'benefit' };
+                    setObjectiveCriteria(prev => [...prev, newCriterion]);
+                } else { // 'subjectiveRating'
+                    newId = `src${subjectiveRatingCriteria.length + 1}`;
+                    newCriterion = { id: newId, name: `Subjective Criterion ${subjectiveRatingCriteria.length + 1}`, type: 'benefit' };
+                    setSubjectiveRatingCriteria(prev => [...prev, newCriterion]);
+                }
+
+                setObjectiveData(prevData => {
+                    const newData = { ...prevData };
+                    suppliers.forEach(s => {
+                        newData[s.id] = { ...newData[s.id], [newId]: 0 }; // Initialize with 0 for new criterion
+                    });
+                    return newData;
+                });
+            };
+
+            const removeCriterion = (idToRemove, type) => {
+                const currentAllCriteria = [...objectiveCriteria, ...subjectiveRatingCriteria];
+                if (currentAllCriteria.length <= 1) {
+                    showMessageBox('Cannot Remove', 'You must have at least one criterion overall.');
+                    return;
+                }
+
+                if (type === 'objective') {
+                    setObjectiveCriteria(objectiveCriteria.filter(c => c.id !== idToRemove));
+                } else { // 'subjectiveRating'
+                    setSubjectiveRatingCriteria(subjectiveRatingCriteria.filter(c => c.id !== idToRemove));
+                }
+
+                setObjectiveData(prevData => {
+                    const newData = { ...prevData };
+                    suppliers.forEach(s => {
+                        const supplierData = { ...newData[s.id] };
+                        delete supplierData[idToRemove];
+                        newData[s.id] = supplierData;
+                    });
+                    return newData;
+                });
+
+                // Reset BWM selections if the best/worst criterion is removed
+                if (bestCriterionId === idToRemove) setBestCriterionId('');
+                if (worstCriterionId === idToRemove) setWorstCriterionId('');
+                setBestToOthersComparisons(prev => {
+                    const newComparisons = { ...prev };
+                    delete newComparisons[idToRemove];
+                    return newComparisons;
+                });
+                setOthersToWorstComparisons(prev => {
+                    const newComparisons = { ...prev };
+                    delete newComparisons[idToRemove];
+                    return newComparisons;
+                });
+            };
+
+            const handleCriterionChange = (id, field, value, type) => {
+                if (type === 'objective') {
+                    setObjectiveCriteria(objectiveCriteria.map(c => (c.id === id ? { ...c, [field]: value } : c)));
+                } else { // 'subjectiveRating'
+                    setSubjectiveRatingCriteria(subjectiveRatingCriteria.map(c => (c.id === id ? { ...c, [field]: value } : c)));
+                }
+            };
+
+            // --- Objective Data Input ---
+            const handleObjectiveDataChange = (supplierId, criterionId, value) => {
+                setObjectiveData(prevData => ({
+                    ...prevData,
+                    [supplierId]: {
+                        ...prevData[supplierId],
+                        [criterionId]: parseFloat(value) || 0, // Ensure it's a number
+                    },
+                }));
+            };
+
+            // --- BWM Calculation Trigger (Now calls backend) ---
+            const calculateBWMWeights = React.useCallback(async () => {
+                setError('');
+                const allCriteria = [...objectiveCriteria, ...subjectiveRatingCriteria];
+                if (allCriteria.length < 2) {
+                    showMessageBox('BWM Error', 'BWM requires at least two criteria for comparison.');
+                    return;
+                }
+                if (!bestCriterionId || !worstCriterionId) {
+                    showMessageBox('BWM Error', 'Please select both a Best and a Worst Criterion.');
+                    return;
+                }
+                if (bestCriterionId === worstCriterionId) {
+                    showMessageBox('BWM Error', 'Best and Worst Criteria cannot be the same.');
+                    return;
+                }
+
+                setIsCalculatingBWM(true);
+                try {
+                    const criteriaIds = allCriteria.map(c => c.id);
+                    const criteriaNames = allCriteria.map(c => c.name); // Not strictly needed for backend, but useful for debugging
+
+                    const payload = {
+                        criteria_ids: criteriaIds,
+                        best_criterion_id: bestCriterionId,
+                        worst_criterion_id: worstCriterionId,
+                        best_to_others: bestToOthersComparisons,
+                        others_to_worst: othersToWorstComparisons,
+                    };
+
+                    const response = await fetch(`${BACKEND_URL}/calculate_bwm_weights`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(payload),
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || 'Failed to calculate BWM weights.');
+                    }
+
+                    const data = await response.json();
+                    setBwmCalculatedSubjectiveWeights(data.subjective_weights);
+                    showMessageBox('BWM Success', 'Subjective weights calculated successfully using BWM!');
+                } catch (err) {
+                    setError(`BWM Calculation Error: ${err.message}. Please ensure the Python backend is running and accessible at ${BACKEND_URL}.`);
+                    setBwmCalculatedSubjectiveWeights({}); // Clear previous weights on error
+                } finally {
+                    setIsCalculatingBWM(false);
+                }
+            }, [bestCriterionId, worstCriterionId, bestToOthersComparisons, othersToWorstComparisons, objectiveCriteria, subjectiveRatingCriteria]);
+
+            // Handle changes for Best-to-Others comparisons
+            const handleBestToOthersChange = (criterionId, value) => {
+                setBestToOthersComparisons(prev => ({
+                    ...prev,
+                    [criterionId]: parseInt(value) || 1,
+                }));
+            };
+
+            // Handle changes for Others-to-Worst comparisons
+            const handleOthersToWorstChange = (criterionId, value) => {
+                setOthersToWorstComparisons(prev => ({
+                    ...prev,
+                    [criterionId]: parseInt(value) || 1,
+                }));
+            };
+
+            // Effect to initialize BWM comparison inputs when best/worst criterion changes
+            React.useEffect(() => {
+                const allCriteria = [...objectiveCriteria, ...subjectiveRatingCriteria];
+                const initialBestToOthers = {};
+                const initialOthersToWorst = {};
+
+                allCriteria.forEach(c => {
+                    if (c.id === bestCriterionId) {
+                        initialBestToOthers[c.id] = 1; // Best criterion compared to itself is 1
+                    } else {
+                        initialBestToOthers[c.id] = bestToOthersComparisons[c.id] || 1;
+                    }
+
+                    if (c.id === worstCriterionId) {
+                        initialOthersToWorst[c.id] = 1; // Worst criterion compared to itself is 1
+                    } else {
+                        initialOthersToWorst[c.id] = othersToWorstComparisons[c.id] || 1;
+                    }
+                });
+
+                setBestToOthersComparisons(initialBestToOthers);
+                setOthersToWorstComparisons(initialOthersToWorst);
+            }, [bestCriterionId, worstCriterionId, objectiveCriteria, subjectiveRatingCriteria]);
+
+
+            // --- Core GAPS Calculation Logic (Adapted from PDF) ---
+            const calculateGAPS = React.useCallback(() => {
+                setError('');
+                const allCriteria = [...objectiveCriteria, ...subjectiveRatingCriteria];
+
+                if (suppliers.length === 0 || allCriteria.length === 0) {
+                    setError('Please add at least one supplier and one criterion.');
+                    return;
+                }
+
+                if (Object.keys(bwmCalculatedSubjectiveWeights).length === 0 && allCriteria.length > 0) {
+                    setError('Please calculate subjective weights using BWM first.');
+                    return;
+                }
+
+
+                // --- Step 1: Initial Decision Matrix (M) & Normalization (N) ---
+                const normalizedMatrix = {}; // N
+                const criterionValues = {}; // Store all values for each criterion to find min/max
+
+                allCriteria.forEach(c => {
+                    criterionValues[c.id] = suppliers.map(s => objectiveData[s.id]?.[c.id] || 0);
+                });
+
+                allCriteria.forEach(c => {
+                    const values = criterionValues[c]; // Use c directly here for values array
+                    const minVal = Math.min(...values);
+                    const maxVal = Math.max(...values);
+
+                    if (maxVal === minVal) {
+                        suppliers.forEach(s => {
+                            if (!normalizedMatrix[s.id]) normalizedMatrix[s.id] = {};
+                            normalizedMatrix[s.id][c.id] = 0;
+                        });
+                        return;
+                    }
+
+                    suppliers.forEach(s => {
+                        const val = objectiveData[s.id]?.[c.id] || 0;
+                        let normalizedVal;
+                        if (c.type === 'benefit') {
+                            normalizedVal = (val - minVal) / (maxVal - minVal);
+                        } else { // 'cost'
+                            normalizedVal = (maxVal - val) / (maxVal - minVal);
+                        }
+                        if (!normalizedMatrix[s.id]) normalizedMatrix[s.id] = {};
+                        normalizedMatrix[s.id][c.id] = normalizedVal;
+                    });
+                });
+
+                // --- Step 2: Objective Weights (Entropy Weighting) ---
+                const lnN = Math.log(suppliers.length);
+                const informationEntropy = {}; // Il
+                const k = lnN === 0 ? 0 : -1 / lnN;
+
+                allCriteria.forEach(c => {
+                    let sum_r_ln_r = 0;
+                    suppliers.forEach(s => {
+                        const r_val = normalizedMatrix[s.id][c.id];
+                        if (r_val > 0) {
+                            sum_r_ln_r += r_val * Math.log(r_val);
+                        }
+                    });
+                    informationEntropy[c.id] = k * sum_r_ln_r;
+                });
+
+                const objectiveWeights = {}; // w_l^o
+                let sum_1_minus_Il = 0;
+                allCriteria.forEach(c => {
+                    sum_1_minus_Il += (1 - informationEntropy[c.id]);
+                });
+
+                allCriteria.forEach(c => {
+                    objectiveWeights[c.id] = sum_1_minus_Il === 0 ? (1 / allCriteria.length) : (1 - informationEntropy[c.id]) / sum_1_minus_Il;
+                });
+
+                // --- Step 3: Subjective Weights (from BWM backend) ---
+                const subjectiveWeights = bwmCalculatedSubjectiveWeights; // Use weights from backend
+
+                // --- Step 4: Integrated Weights (Bayes' Theorem) ---
+                const integratedWeights = {}; // w_l
+                let sum_wo_ws = 0;
+                allCriteria.forEach(c => {
+                    // Ensure subjective weight exists, default to 0 if not (though BWM should provide all)
+                    const s_w = subjectiveWeights[c.id] || 0;
+                    sum_wo_ws += objectiveWeights[c.id] * s_w;
+                });
+
+                allCriteria.forEach(c => {
+                    const s_w = subjectiveWeights[c.id] || 0;
+                    integratedWeights[c.id] = sum_wo_ws === 0 ? (1 / allCriteria.length) : (objectiveWeights[c.id] * s_w) / sum_wo_ws;
+                });
+
+                // --- Step 5: Compute GAPS (Global Airport Performance Score) ---
+                const weightedNormalizedMatrix = {}; // Z
+                suppliers.forEach(s => {
+                    weightedNormalizedMatrix[s.id] = {};
+                    allCriteria.forEach(c => {
+                        weightedNormalizedMatrix[s.id][c.id] = normalizedMatrix[s.id][c.id] * integratedWeights[c.id];
+                    });
+                });
+
+                const geometricMeanMatrix = {}; // G_l
+                allCriteria.forEach(c => {
+                    let product = 1;
+                    suppliers.forEach(s => {
+                        // Ensure product is not 0 if normalized value is 0, to avoid issues with Math.pow(0, 1/n)
+                        product *= (weightedNormalizedMatrix[s.id][c.id] === 0 ? 0.000001 : weightedNormalizedMatrix[s.id][c.id]);
+                    });
+                    geometricMeanMatrix[c.id] = suppliers.length === 0 ? 0 : Math.pow(product, 1 / suppliers.length);
+                });
+
+                const differenceMatrix = {}; // H
+                suppliers.forEach(s => {
+                    differenceMatrix[s.id] = {};
+                    allCriteria.forEach(c => {
+                        differenceMatrix[s.id][c.id] = weightedNormalizedMatrix[s.id][c.id] - geometricMeanMatrix[c.id];
+                    });
+                });
+
+                const supplierScores = suppliers.map(s => {
+                    let gaps = 0;
+                    allCriteria.forEach(c => {
+                        gaps += differenceMatrix[s.id][c.id];
+                    });
+                    return {
+                        id: s.id,
+                        name: s.name,
+                        score: gaps,
+                    };
+                }).sort((a, b) => b.score - a.score); // Rank from highest to lowest score
+
+                setResults({
+                    normalizedMatrix,
+                    objectiveWeights,
+                    subjectiveWeights, // These are now the BWM calculated ones
+                    integratedWeights,
+                    weightedNormalizedMatrix,
+                    geometricMeanMatrix,
+                    differenceMatrix,
+                    supplierScores,
+                });
+            }, [suppliers, objectiveCriteria, subjectiveRatingCriteria, objectiveData, bwmCalculatedSubjectiveWeights]);
+
+            // Initial calculation on component mount or data change
+            React.useEffect(() => {
+                // Only calculate GAPS if BWM weights are available or if there are no criteria (initial state)
+                if (Object.keys(bwmCalculatedSubjectiveWeights).length > 0 || [...objectiveCriteria, ...subjectiveRatingCriteria].length === 0) {
+                    calculateGAPS();
+                }
+            }, [calculateGAPS, bwmCalculatedSubjectiveWeights, objectiveCriteria, subjectiveRatingCriteria]);
+
+
+            const allCriteria = [...objectiveCriteria, ...subjectiveRatingCriteria];
+
+            // --- PDF Export Function ---
+            const exportResultsToPdf = () => {
+                // Check if html2canvas and jsPDF are loaded
+                if (typeof window.html2canvas === 'undefined' || typeof window.jspdf === 'undefined') {
+                    showMessageBox('Export Error', 'PDF generation libraries are not loaded. Please ensure internet connectivity or try again.');
+                    console.error("PDF libraries not loaded.");
+                    return;
+                }
+
+                const input = document.getElementById('results-section'); // Get the results section by ID
+                if (!input) {
+                    showMessageBox('Export Error', 'Results section not found. Please calculate results first.');
+                    return;
+                }
+
+                // Temporarily hide elements that shouldn't be in the PDF (e.g., the export button itself)
+                const exportButton = document.getElementById('export-pdf-button');
+                if (exportButton) exportButton.style.display = 'none';
+
+                // Use window.html2canvas and window.jspdf
+                window.html2canvas(input, { scale: 2 }) // Increase scale for better resolution
+                    .then((canvas) => {
+                        const imgData = canvas.toDataURL('image/png');
+                        const pdf = new window.jspdf.jsPDF('p', 'mm', 'a4'); // 'p' for portrait, 'mm' for millimeters, 'a4' size
+                        const imgWidth = 210; // A4 width in mm
+                        const pageHeight = 297; // A4 height in mm
+                        const imgHeight = canvas.height * imgWidth / canvas.width;
+                        let heightLeft = imgHeight;
+                        let position = 0;
+
+                        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+                        heightLeft -= pageHeight;
+
+                        while (heightLeft >= 0) {
+                            position = heightLeft - imgHeight;
+                            pdf.addPage();
+                            pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+                            heightLeft -= pageHeight;
+                        }
+
+                        pdf.save('Supplier_Selection_Results.pdf');
+                    })
+                    .catch(err => {
+                        showMessageBox('Export Error', `Failed to generate PDF: ${err.message}`);
+                        console.error("PDF generation error:", err);
+                    })
+                    .finally(() => {
+                        // Restore hidden elements
+                        if (exportButton) exportButton.style.display = 'block';
+                    });
+            };
+
+
+            return (
+                <div className="min-h-screen bg-gray-50 font-inter p-4 sm:p-6 lg:p-8">
+                    <div className="max-w-7xl mx-auto bg-white shadow-lg rounded-xl p-6 sm:p-8">
+                        <h1 className="text-3xl sm:text-4xl font-extrabold text-gray-900 mb-6 text-center">
+                            Supplier Selection Tool
+                        </h1>
+                        <p className="text-gray-600 mb-8 text-center max-w-2xl mx-auto">
+                            Evaluate and rank suppliers using a multi-criteria approach, combining objective data with subjective preferences, inspired by the Global Airport Performance Score (GAPS) methodology. Subjective weights are calculated using the Best-Worst Method (BWM) via a Python backend.
+                        </p>
+
+                        {error && (
+                            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-md relative mb-4" role="alert">
+                                <strong className="font-bold">Error!</strong>
+                                <span className="block sm:inline"> {error}</span>
+                            </div>
+                        )}
+
+                        {/* Message Box Modal */}
+                        {messageBox.show && (
+                            <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center z-50">
+                                <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full">
+                                    <h2 className="text-xl font-bold mb-4 text-gray-900">{messageBox.title}</h2>
+                                    <p className="text-gray-700 mb-6">{messageBox.message}</p>
+                                    <button
+                                        onClick={closeMessageBox}
+                                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md transition duration-300 ease-in-out"
+                                    >
+                                        OK
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Supplier Management Section */}
+                        <div className="mb-8 p-6 bg-blue-50 rounded-lg shadow-inner">
+                            <h2 className="text-2xl font-semibold text-blue-800 mb-4 flex items-center">
+                                <svg className="w-6 h-6 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H2v-2a3 3 0 015.356-1.857M17 20v-2c0-.185-.015-.369-.044-.552m0 0A3 3 0 0014.854 10.5h-1.298a3 3 0 00-.776-1.63L10.99 7.462m0 0a3 3 0 00-4.243 0L4.293 9.707A3 3 0 003 12.5v2m0 0c-.185-.015-.369-.044-.552-.044m0 0A3 3 0 001.5 10.5h-1.298a3 3 0 00-.776-1.63L-1.01 7.462m0 0a3 3 0 00-4.243 0L-7.707 9.707A3 3 0 00-9 12.5v2"></path></svg>
+                                Manage Suppliers
+                            </h2>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+                                {suppliers.map(s => (
+                                    <div key={s.id} className="flex items-center bg-white p-3 rounded-md shadow-sm border border-blue-200">
+                                        <input
+                                            type="text"
+                                            value={s.name}
+                                            onChange={(e) => handleSupplierNameChange(s.id, e.target.value)}
+                                            className="flex-grow border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 mr-2 p-2 text-sm"
+                                            placeholder="Supplier Name"
+                                        />
+                                        <button
+                                            onClick={() => removeSupplier(s.id)}
+                                            className="bg-red-500 hover:bg-red-600 text-white p-2 rounded-md transition duration-300 ease-in-out text-sm"
+                                            title="Remove Supplier"
+                                        >
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                            <button
+                                onClick={addSupplier}
+                                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md transition duration-300 ease-in-out flex items-center justify-center"
+                            >
+                                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                                Add Supplier
+                            </button>
+                        </div>
+
+                        {/* Objective Criteria Management Section */}
+                        <div className="mb-8 p-6 bg-green-50 rounded-lg shadow-inner">
+                            <h2 className="text-2xl font-semibold text-green-800 mb-4 flex items-center">
+                                <svg className="w-6 h-6 mr-2 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 17v-2m3 2v-4m3 2v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                Manage Objective Criteria (Numerical Data)
+                            </h2>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                {objectiveCriteria.map(c => (
+                                    <div key={c.id} className="flex flex-col bg-white p-3 rounded-md shadow-sm border border-green-200">
+                                        <div className="flex items-center mb-2">
+                                            <input
+                                                type="text"
+                                                value={c.name}
+                                                onChange={(e) => handleCriterionChange(c.id, 'name', e.target.value, 'objective')}
+                                                className="flex-grow border-gray-300 rounded-md shadow-sm focus:ring-green-500 focus:border-green-500 mr-2 p-2 text-sm"
+                                                placeholder="Criterion Name"
+                                            />
+                                            <button
+                                                onClick={() => removeCriterion(c.id, 'objective')}
+                                                className="bg-red-500 hover:bg-red-600 text-white p-2 rounded-md transition duration-300 ease-in-out text-sm"
+                                                title="Remove Criterion"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                            </button>
+                                        </div>
+                                        <div className="flex items-center mb-2 text-sm text-gray-700">
+                                            <span className="mr-2">Type:</span>
+                                            <label className="inline-flex items-center mr-3">
+                                                <input
+                                                    type="radio"
+                                                    className="form-radio text-green-600"
+                                                    name={`type-${c.id}`}
+                                                    value="benefit"
+                                                    checked={c.type === 'benefit'}
+                                                    onChange={() => handleCriterionChange(c.id, 'type', 'benefit', 'objective')}
+                                                />
+                                                <span className="ml-1">Benefit (Higher is Better)</span>
+                                            </label>
+                                            <label className="inline-flex items-center">
+                                                <input
+                                                    type="radio"
+                                                    className="form-radio text-green-600"
+                                                    name={`type-${c.id}`}
+                                                    value="cost"
+                                                    checked={c.type === 'cost'}
+                                                    onChange={() => handleCriterionChange(c.id, 'type', 'cost', 'objective')}
+                                                />
+                                                <span className="ml-1">Cost (Lower is Better)</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            <button
+                                onClick={() => addCriterion('objective')}
+                                className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md transition duration-300 ease-in-out flex items-center justify-center"
+                            >
+                                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                                Add Objective Criterion
+                            </button>
+                        </div>
+
+                        {/* Subjective Rating Criteria Management Section */}
+                        <div className="mb-8 p-6 bg-purple-50 rounded-lg shadow-inner">
+                            <h2 className="text-2xl font-semibold text-purple-800 mb-4 flex items-center">
+                                <svg className="w-6 h-6 mr-2 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                                Manage Subjective Rating Criteria (User Ratings)
+                            </h2>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                {subjectiveRatingCriteria.map(c => (
+                                    <div key={c.id} className="flex flex-col bg-white p-3 rounded-md shadow-sm border border-purple-200">
+                                        <div className="flex items-center mb-2">
+                                            <input
+                                                type="text"
+                                                value={c.name}
+                                                onChange={(e) => handleCriterionChange(c.id, 'name', e.target.value, 'subjectiveRating')}
+                                                className="flex-grow border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 mr-2 p-2 text-sm"
+                                                placeholder="Criterion Name"
+                                            />
+                                            <button
+                                                onClick={() => removeCriterion(c.id, 'subjectiveRating')}
+                                                className="bg-red-500 hover:bg-red-600 text-white p-2 rounded-md transition duration-300 ease-in-out text-sm"
+                                                title="Remove Criterion"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                            </button>
+                                        </div>
+                                        <div className="flex items-center mb-2 text-sm text-gray-700">
+                                            <span className="mr-2">Type:</span>
+                                            <label className="inline-flex items-center mr-3">
+                                                <input
+                                                    type="radio"
+                                                    className="form-radio text-purple-600"
+                                                    name={`type-${c.id}`}
+                                                    value="benefit"
+                                                    checked={c.type === 'benefit'}
+                                                    onChange={() => handleCriterionChange(c.id, 'type', 'benefit', 'subjectiveRating')}
+                                                />
+                                                <span className="ml-1">Benefit (Higher is Better)</span>
+                                            </label>
+                                            <label className="inline-flex items-center">
+                                                <input
+                                                    type="radio"
+                                                    className="form-radio text-purple-600"
+                                                    name={`type-${c.id}`}
+                                                    value="cost"
+                                                    checked={c.type === 'cost'}
+                                                    onChange={() => handleCriterionChange(c.id, 'type', 'cost', 'subjectiveRating')}
+                                                />
+                                                <span className="ml-1">Cost (Lower is Better)</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            <button
+                                onClick={() => addCriterion('subjectiveRating')}
+                                className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-md transition duration-300 ease-in-out flex items-center justify-center"
+                            >
+                                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                                Add Subjective Rating Criterion
+                            </button>
+                        </div>
+
+                        {/* BWM Input Section */}
+                        <div className="mb-8 p-6 bg-red-50 rounded-lg shadow-inner">
+                            <h2 className="text-2xl font-semibold text-red-800 mb-4 flex items-center">
+                                <svg className="w-6 h-6 mr-2 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                                Subjective Weight Calculation (Best-Worst Method)
+                            </h2>
+                            <p className="text-sm text-gray-600 mb-4">
+                                *This method uses a backend to perform a mathematically rigorous optimization for subjective weights.*
+                            </p>
+                            <div className="mb-4">
+                                <label htmlFor="best-criterion" className="block text-sm font-medium text-gray-700 mb-1">Select Best Criterion:</label>
+                                <select
+                                    id="best-criterion"
+                                    className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-red-500 focus:border-red-500 sm:text-sm rounded-md"
+                                    value={bestCriterionId}
+                                    onChange={(e) => setBestCriterionId(e.target.value)}
+                                >
+                                    <option value="">-- Select --</option>
+                                    {allCriteria.map(c => (
+                                        <option key={c.id} value={c.id}>{c.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="mb-4">
+                                <label htmlFor="worst-criterion" className="block text-sm font-medium text-gray-700 mb-1">Select Worst Criterion:</label>
+                                <select
+                                    id="worst-criterion"
+                                    className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-red-500 focus:border-red-500 sm:text-sm rounded-md"
+                                    value={worstCriterionId}
+                                    onChange={(e) => setWorstCriterionId(e.target.value)}
+                                >
+                                    <option value="">-- Select --</option>
+                                    {allCriteria.map(c => (
+                                        <option key={c.id} value={c.id}>{c.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            {bestCriterionId && (
+                                <div className="mb-4 p-4 bg-red-100 rounded-md">
+                                    <h3 className="text-lg font-semibold text-red-700 mb-2">Best-to-Others Comparisons (1-9 Scale)</h3>
+                                    <p className="text-sm text-gray-600 mb-3">How much more important is the Best Criterion ({allCriteria.find(c => c.id === bestCriterionId)?.name}) compared to others?</p>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        {allCriteria.filter(c => c.id !== bestCriterionId).map(c => (
+                                            <div key={c.id} className="flex items-center justify-between bg-white p-2 rounded-md shadow-sm">
+                                                <label className="text-sm text-gray-700 mr-2">{c.name}:</label>
+                                                <input
+                                                    type="number"
+                                                    min="1"
+                                                    max="9"
+                                                    value={bestToOthersComparisons[c.id] || 1}
+                                                    onChange={(e) => handleBestToOthersChange(c.id, e.target.value)}
+                                                    className="w-20 border-gray-300 rounded-md shadow-sm focus:ring-red-500 focus:border-red-500 p-1 text-sm text-center"
+                                                />
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {worstCriterionId && (
+                                <div className="mb-4 p-4 bg-red-100 rounded-md">
+                                    <h3 className="text-lg font-semibold text-red-700 mb-2">Others-to-Worst Comparisons (1-9 Scale)</h3>
+                                    <p className="text-sm text-gray-600 mb-3">How much more important are other criteria compared to the Worst Criterion ({allCriteria.find(c => c.id === worstCriterionId)?.name})?</p>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        {allCriteria.filter(c => c.id !== worstCriterionId).map(c => (
+                                            <div key={c.id} className="flex items-center justify-between bg-white p-2 rounded-md shadow-sm">
+                                                <label className="text-sm text-gray-700 mr-2">{c.name}:</label>
+                                                <input
+                                                    type="number"
+                                                    min="1"
+                                                    max="9"
+                                                    value={othersToWorstComparisons[c.id] || 1}
+                                                    onChange={(e) => handleOthersToWorstChange(c.id, e.target.value)}
+                                                    className="w-20 border-gray-300 rounded-md shadow-sm focus:ring-red-500 focus:border-red-500 p-1 text-sm text-center"
+                                                />
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            <button
+                                onClick={calculateBWMWeights}
+                                disabled={isCalculatingBWM}
+                                className={`w-full ${isCalculatingBWM ? 'bg-gray-400 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'} text-white font-bold py-2 px-4 rounded-md transition duration-300 ease-in-out flex items-center justify-center`}
+                            >
+                                {isCalculatingBWM ? (
+                                    <>
+                                        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                        </svg>
+                                        Calculating BWM Weights...
+                                    </>
+                                ) : (
+                                    <>
+                                        <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                                        Calculate Subjective Weights (BWM)
+                                    </>
+                                )}
+                            </button>
+                            {Object.keys(bwmCalculatedSubjectiveWeights).length > 0 && (
+                                <div className="mt-4 p-3 bg-red-100 rounded-md">
+                                    <h3 className="text-lg font-semibold text-red-700 mb-2">Calculated Subjective Weights:</h3>
+                                    <ul className="list-disc list-inside text-gray-700">
+                                        {allCriteria.map(c => (
+                                            <li key={c.id}>{c.name}: {bwmCalculatedSubjectiveWeights[c.id]?.toFixed(4)}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+                        </div>
+
+
+                        {/* Objective Data Input Table */}
+                        <div className="mb-8 p-6 bg-yellow-50 rounded-lg shadow-inner overflow-x-auto">
+                            <h2 className="text-2xl font-semibold text-yellow-800 mb-4 flex items-center">
+                                <svg className="w-6 h-6 mr-2 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                                Input Data
+                            </h2>
+                            <div className="overflow-x-auto">
+                                <table className="min-w-full bg-white rounded-md shadow-sm">
+                                    <thead>
+                                        <tr className="bg-yellow-100 text-yellow-900 uppercase text-sm leading-normal">
+                                            <th className="py-3 px-6 text-left rounded-tl-md">Supplier</th>
+                                            {allCriteria.map(c => (
+                                                <th key={c.id} className="py-3 px-6 text-center">{c.name}</th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody className="text-gray-700 text-sm">
+                                        {suppliers.map(s => (
+                                            <tr key={s.id} className="border-b border-gray-200 hover:bg-gray-50">
+                                                <td className="py-3 px-6 text-left whitespace-nowrap font-medium">{s.name}</td>
+                                                {allCriteria.map(c => (
+                                                    <td key={c.id} className="py-3 px-6 text-center">
+                                                        <input
+                                                            type="number"
+                                                            value={objectiveData[s.id]?.[c.id] || ''}
+                                                            onChange={(e) => handleObjectiveDataChange(s.id, c.id, e.target.value)}
+                                                            className="w-24 border-gray-300 rounded-md shadow-sm focus:ring-yellow-500 focus:border-yellow-500 p-2 text-sm text-center"
+                                                            placeholder="Value"
+                                                        />
+                                                    </td>
+                                                ))}
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        {/* Calculation Trigger */}
+                        <div className="text-center mb-8">
+                            <button
+                                onClick={calculateGAPS}
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-8 rounded-md shadow-lg transform transition duration-300 ease-in-out hover:scale-105"
+                            >
+                                Calculate Supplier Scores
+                            </button>
+                        </div>
+
+                        {/* Results Section */}
+                        {results && (
+                            <div id="results-section" className="p-6 bg-blue-50 rounded-lg shadow-inner">
+                                <h2 className="text-2xl font-semibold text-blue-800 mb-4 flex items-center">
+                                    <svg className="w-6 h-6 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                    Calculation Results
+                                </h2>
+
+                                {/* Supplier Ranking */}
+                                <h3 className="text-xl font-medium text-blue-700 mb-3 mt-6">Supplier Ranking (Global Score)</h3>
+                                <div className="overflow-x-auto mb-6">
+                                    <table className="min-w-full bg-white rounded-md shadow-sm">
+                                        <thead>
+                                            <tr className="bg-blue-100 text-blue-900 uppercase text-sm leading-normal">
+                                                <th className="py-3 px-6 text-left rounded-tl-md">Rank</th>
+                                                <th className="py-3 px-6 text-left">Supplier</th>
+                                                <th className="py-3 px-6 text-right rounded-tr-md">GAPS Score</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="text-gray-700 text-sm">
+                                            {results.supplierScores.map((s, index) => (
+                                                <tr key={s.id} className="border-b border-gray-200 hover:bg-gray-50">
+                                                    <td className="py-3 px-6 text-left font-bold">{index + 1}</td>
+                                                    <td className="py-3 px-6 text-left">{s.name}</td>
+                                                    <td className="py-3 px-6 text-right">{s.score.toFixed(4)}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                {/* Weights Breakdown */}
+                                <h3 className="text-xl font-medium text-blue-700 mb-3 mt-6">Criteria Weights</h3>
+                                <div className="overflow-x-auto mb-6">
+                                    <table className="min-w-full bg-white rounded-md shadow-sm">
+                                        <thead>
+                                            <tr className="bg-blue-100 text-blue-900 uppercase text-sm leading-normal">
+                                                <th className="py-3 px-6 text-left rounded-tl-md">Criterion</th>
+                                                <th className="py-3 px-6 text-right">Objective Weight</th>
+                                                <th className="py-3 px-6 text-right">Subjective Weight</th>
+                                                <th className="py-3 px-6 text-right rounded-tr-md">Integrated Weight</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="text-gray-700 text-sm">
+                                            {allCriteria.map(c => (
+                                                <tr key={c.id} className="border-b border-gray-200 hover:bg-gray-50">
+                                                    <td className="py-3 px-6 text-left">{c.name}</td>
+                                                    <td className="py-3 px-6 text-right">{results.objectiveWeights[c.id]?.toFixed(4)}</td>
+                                                    <td className="py-3 px-6 text-right">{results.subjectiveWeights[c.id]?.toFixed(4)}</td>
+                                                    <td className="py-3 px-6 text-right font-bold">{results.integratedWeights[c.id]?.toFixed(4)}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                {/* Normalized Data */}
+                                <h3 className="text-xl font-medium text-blue-700 mb-3 mt-6">Normalized Data</h3>
+                                <div className="overflow-x-auto mb-6">
+                                    <table className="min-w-full bg-white rounded-md shadow-sm">
+                                        <thead>
+                                            <tr className="bg-blue-100 text-blue-900 uppercase text-sm leading-normal">
+                                                <th className="py-3 px-6 text-left rounded-tl-md">Supplier</th>
+                                                {allCriteria.map(c => (
+                                                    <th key={c.id} className="py-3 px-6 text-center">{c.name}</th>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody className="text-gray-700 text-sm">
+                                            {suppliers.map(s => (
+                                                <tr key={s.id} className="border-b border-gray-200 hover:bg-gray-50">
+                                                    <td className="py-3 px-6 text-left whitespace-nowrap font-medium">{s.name}</td>
+                                                    {allCriteria.map(c => (
+                                                        <td key={c.id} className="py-3 px-6 text-center">
+                                                            {results.normalizedMatrix[s.id]?.[c.id]?.toFixed(4)}
+                                                        </td>
+                                                    ))}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                {/* Weighted Normalized Data */}
+                                <h3 className="text-xl font-medium text-blue-700 mb-3 mt-6">Weighted Normalized Data (Z Matrix)</h3>
+                                <div className="overflow-x-auto mb-6">
+                                    <table className="min-w-full bg-white rounded-md shadow-sm">
+                                        <thead>
+                                            <tr className="bg-blue-100 text-blue-900 uppercase text-sm leading-normal">
+                                                <th className="py-3 px-6 text-left rounded-tl-md">Supplier</th>
+                                                {allCriteria.map(c => (
+                                                    <th key={c.id} className="py-3 px-6 text-center">{c.name}</th>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody className="text-gray-700 text-sm">
+                                            {suppliers.map(s => (
+                                                <tr key={s.id} className="border-b border-gray-200 hover:bg-gray-50">
+                                                    <td className="py-3 px-6 text-left whitespace-nowrap font-medium">{s.name}</td>
+                                                    {allCriteria.map(c => (
+                                                        <td key={c.id} className="py-3 px-6 text-center">
+                                                            {results.weightedNormalizedMatrix[s.id]?.[c.id]?.toFixed(4)}
+                                                        </td>
+                                                    ))}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                {/* Geometric Mean per Criterion */}
+                                <h3 className="text-xl font-medium text-blue-700 mb-3 mt-6">Geometric Mean per Criterion (G)</h3>
+                                <div className="overflow-x-auto mb-6">
+                                    <table className="min-w-full bg-white rounded-md shadow-sm">
+                                        <thead>
+                                            <tr className="bg-blue-100 text-blue-900 uppercase text-sm leading-normal">
+                                                {allCriteria.map(c => (
+                                                    <th key={c.id} className="py-3 px-6 text-center rounded-t-md">{c.name}</th>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody className="text-gray-700 text-sm">
+                                            <tr className="border-b border-gray-200 hover:bg-gray-50">
+                                                {allCriteria.map(c => (
+                                                    <td key={c.id} className="py-3 px-6 text-center">
+                                                        {results.geometricMeanMatrix[c.id]?.toFixed(4)}
+                                                    </td>
+                                                ))}
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                {/* Difference Matrix */}
+                                <h3 className="text-xl font-medium text-blue-700 mb-3 mt-6">Difference Matrix (H = Z - G)</h3>
+                                <div className="overflow-x-auto mb-6">
+                                    <table className="min-w-full bg-white rounded-md shadow-sm">
+                                        <thead>
+                                            <tr className="bg-blue-100 text-blue-900 uppercase text-sm leading-normal">
+                                                <th className="py-3 px-6 text-left rounded-tl-md">Supplier</th>
+                                                {allCriteria.map(c => (
+                                                    <th key={c.id} className="py-3 px-6 text-center">{c.name}</th>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody className="text-gray-700 text-sm">
+                                            {suppliers.map(s => (
+                                                <tr key={s.id} className="border-b border-gray-200 hover:bg-gray-50">
+                                                    <td className="py-3 px-6 text-left whitespace-nowrap font-medium">{s.name}</td>
+                                                    {allCriteria.map(c => (
+                                                        <td key={c.id} className="py-3 px-6 text-center">
+                                                            {results.differenceMatrix[s.id]?.[c.id]?.toFixed(4)}
+                                                        </td>
+                                                    ))}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                {/* PDF Export Button */}
+                                <div className="text-center mt-8">
+                                    <button
+                                        id="export-pdf-button"
+                                        onClick={exportResultsToPdf}
+                                        className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-8 rounded-md shadow-lg transform transition duration-300 ease-in-out hover:scale-105 flex items-center justify-center mx-auto"
+                                    >
+                                        <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                        Export Results to PDF
+                                    </button>
+                                </div>
+
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // Render the React App
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
