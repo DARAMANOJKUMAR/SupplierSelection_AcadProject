@@ -64,17 +64,18 @@
             const [messageBox, setMessageBox] = React.useState({ show: false, title: '', message: '' });
 
             // Backend URL (adjust if your Flask app runs on a different port/host)
-            const BACKEND_URL = 'https://supplierselection-acadproject-backend.onrender.com'; // Your deployed backend URL from Render.com // Default Flask development server URL - UPDATE THIS AFTER DEPLOYING BACKEND
+            const BACKEND_URL = 'https://supplierselection-acadproject-backend.onrender.com'; // Your deployed backend URL from Render.com
 
             // Utility function to show a custom message box
-            const showMessageBox = (title, message) => {
+            // Ensure this function always has the correct scope for setMessageBox
+            const showMessageBox = React.useCallback((title, message) => {
                 setMessageBox({ show: true, title, message });
-            };
+            }, []); // Empty dependency array means this function is stable and won't recreate
 
             // Utility function to close the custom message box
-            const closeMessageBox = () => {
+            const closeMessageBox = React.useCallback(() => {
                 setMessageBox({ show: false, title: '', message: '' });
-            };
+            }, []); // Empty dependency array means this function is stable
 
             // --- Supplier Management ---
             const addSupplier = () => {
@@ -237,7 +238,7 @@
                 } finally {
                     setIsCalculatingBWM(false);
                 }
-            }, [bestCriterionId, worstCriterionId, bestToOthersComparisons, othersToWorstComparisons, objectiveCriteria, subjectiveRatingCriteria]);
+            }, [bestCriterionId, worstCriterionId, bestToOthersComparisons, othersToWorstComparisons, objectiveCriteria, subjectiveRatingCriteria, showMessageBox, BACKEND_URL]); // Added showMessageBox and BACKEND_URL to dependencies
 
             // Handle changes for Best-to-Others comparisons
             const handleBestToOthersChange = (criterionId, value) => {
@@ -298,14 +299,33 @@
 
                 // --- Step 1: Initial Decision Matrix (M) & Normalization (N) ---
                 const normalizedMatrix = {}; // N
-                const criterionValues = {}; // Store all values for each criterion to find min/max
+                const criterionRawValues = {}; // Store all raw values for each criterion to find min/max
 
+                // First, populate criterionRawValues for ALL criteria from ALL suppliers
                 allCriteria.forEach(c => {
-                    criterionValues[c.id] = suppliers.map(s => objectiveData[s.id]?.[c.id] || 0);
+                    criterionRawValues[c.id] = []; // Initialize as empty array
+                    suppliers.forEach(s => {
+                        // Ensure a value exists for each supplier and criterion. Push 0 if undefined.
+                        const val = objectiveData[s.id]?.[c.id];
+                        criterionRawValues[c.id].push(val === undefined ? 0 : val); 
+                    });
                 });
 
+                // Now, iterate through criteria to normalize
                 allCriteria.forEach(c => {
-                    const values = criterionValues[c]; // Use c directly here for values array
+                    const values = criterionRawValues[c.id]; // This should now always be an array of numbers
+
+                    // This check is now more robust as 'values' should always be an array
+                    if (values.length === 0) {
+                        // This case should ideally not happen if there's at least one supplier
+                        // If no data for this criterion, normalize to 0 or a neutral value
+                        suppliers.forEach(s => {
+                            if (!normalizedMatrix[s.id]) normalizedMatrix[s.id] = {};
+                            normalizedMatrix[s.id][c.id] = 0;
+                        });
+                        return; // Skip to next criterion
+                    }
+
                     const minVal = Math.min(...values);
                     const maxVal = Math.max(...values);
 
@@ -318,7 +338,7 @@
                     }
 
                     suppliers.forEach(s => {
-                        const val = objectiveData[s.id]?.[c.id] || 0;
+                        const val = objectiveData[s.id]?.[c.id] || 0; // Use objectiveData for original value
                         let normalizedVal;
                         if (c.type === 'benefit') {
                             normalizedVal = (val - minVal) / (maxVal - minVal);
