@@ -4,81 +4,78 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Supplier Selection Tool</title>
+    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Inter Font (Tailwind default often uses system fonts, this ensures Inter) -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body {
             font-family: 'Inter', sans-serif;
         }
-        /* Hide print button when printing */
-        @media print {
-            #export-pdf-button {
-                display: none;
-            }
+        .results-table-container {
+            width: 100%;
+        }
+        .chart-container {
+            position: relative;
+            height: 300px; /* Fixed height for consistency */
+            width: 100%;
         }
     </style>
+    <!-- React and ReactDOM CDNs -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel CDN for in-browser JSX compilation -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- PDF Generation Libraries CDNs -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js"></script>
 </head>
 <body class="bg-gray-50">
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef, useCallback } = React;
-
+        // React App Component
         const App = () => {
-            const [suppliers, setSuppliers] = useState([{ id: 's1', name: 'Supplier A' }]);
-            const [objectiveCriteria, setObjectiveCriteria] = useState([
+            const [suppliers, setSuppliers] = React.useState([{ id: 's1', name: 'Supplier A' }]);
+            const [objectiveCriteria, setObjectiveCriteria] = React.useState([
                 { id: 'oc1', name: 'Quality Score', type: 'benefit' },
                 { id: 'oc2', name: 'Unit Cost', type: 'cost' },
             ]);
-            const [subjectiveRatingCriteria, setSubjectiveRatingCriteria] = useState([
+            const [subjectiveRatingCriteria, setSubjectiveRatingCriteria] = React.useState([
                 { id: 'src1', name: 'Sustainability Rating', type: 'benefit' },
                 { id: 'src2', name: 'Relationship Quality', type: 'benefit' },
             ]);
-            const [objectiveData, setObjectiveData] = useState({
+            const [objectiveData, setObjectiveData] = React.useState({
                 s1: { oc1: 90, oc2: 100, src1: 8, src2: 7 },
             });
-
-            // BWM states
-            const [bestCriterionId, setBestCriterionId] = useState('');
-            const [worstCriterionId, setWorstCriterionId] = useState('');
-            const [bestToOthersComparisons, setBestToOthersComparisons] = useState({});
-            const [othersToWorstComparisons, setOthersToWorstComparisons] = useState({});
-            const [bwmCalculatedSubjectiveWeights, setBwmCalculatedSubjectiveWeights] = useState({});
-            const [isCalculatingBWM, setIsCalculatingBWM] = useState(false);
-
-            // Calculation Results states
-            const [gapsResults, setGapsResults] = useState(null); // Renamed from 'results'
-            const [mabacResults, setMabacResults] = useState(null); // New state for MABAC results
-
-            // UI states
-            const [error, setError] = useState('');
-            const [messageBox, setMessageBox] = useState({ show: false, title: '', message: '' });
-            const [activeRankingMethod, setActiveRankingMethod] = useState('GAPS'); // 'GAPS' or 'MABAC'
-
-            // Visualization states
-            const [selectedCriterionForIndividualPerformance, setSelectedCriterionForIndividualPerformance] = useState('');
-            const [selectedSuppliersForRadarChart, setSelectedSuppliersForRadarChart] = useState([]);
-
-            // Chart Refs
-            const individualPerformanceChartRef = useRef(null);
-            const radarChartRef = useRef(null);
-
+            const [bwmComparisons, setBwmComparisons] = React.useState({ bestCriterionId: '', worstCriterionId: '', bestToOthers: {}, othersToWorst: {} });
+            const [bwmCalculatedSubjectiveWeights, setBwmCalculatedSubjectiveWeights] = React.useState({});
+            const [isCalculatingBWM, setIsCalculatingBWM] = React.useState(false);
+            const [results, setResults] = React.useState(null);
+            const [error, setError] = React.useState('');
+            const [messageBox, setMessageBox] = React.useState({ show: false, title: '', message: '' });
+            const [currentMethod, setCurrentMethod] = React.useState('GAPS');
+            const [isPaperExampleMode, setIsPaperExampleMode] = React.useState(false);
+            const [gapsPaperExampleWeights, setGapsPaperExampleWeights] = React.useState({
+                objective: {}, subjective: {}, integrated: {}
+            });
+            const [mabacPaperExampleWeights, setMabacPaperExampleWeights] = React.useState({
+                expert1: {}, expert2: {}
+            });
+            const [mabacWeightScenarioId, setMabacWeightScenarioId] = React.useState('expert1');
+            const [selectedCriterionForChart, setSelectedCriterionForChart] = React.useState('');
             const BACKEND_URL = 'https://supplierselection-acadproject-backend.onrender.com';
 
-            const showMessageBox = useCallback((title, message) => {
+            const showMessageBox = React.useCallback((title, message) => {
                 setMessageBox({ show: true, title, message });
             }, []);
-            const closeMessageBox = useCallback(() => {
+
+            const closeMessageBox = React.useCallback(() => {
                 setMessageBox({ show: false, title: '', message: '' });
             }, []);
 
-            // --- Supplier Management ---
             const addSupplier = () => {
                 const newId = `s${suppliers.length + 1}`;
                 setSuppliers([...suppliers, { id: newId, name: `Supplier ${String.fromCharCode(65 + suppliers.length)}` }]);
@@ -87,6 +84,8 @@
                     [...objectiveCriteria, ...subjectiveRatingCriteria].forEach(c => (newSupplierData[c.id] = 0));
                     return { ...prevData, [newId]: newSupplierData };
                 });
+                setIsPaperExampleMode(false);
+                setResults(null);
             };
 
             const removeSupplier = (idToRemove) => {
@@ -100,14 +99,14 @@
                     delete newData[idToRemove];
                     return newData;
                 });
-                setSelectedSuppliersForRadarChart(prev => prev.filter(id => id !== idToRemove));
+                setIsPaperExampleMode(false);
+                setResults(null);
             };
 
             const handleSupplierNameChange = (id, newName) => {
                 setSuppliers(suppliers.map(s => (s.id === id ? { ...s, name: newName } : s)));
             };
 
-            // --- Criterion Management ---
             const addCriterion = (type) => {
                 let newId;
                 let newCriterion;
@@ -120,7 +119,6 @@
                     newCriterion = { id: newId, name: `Subjective Criterion ${subjectiveRatingCriteria.length + 1}`, type: 'benefit' };
                     setSubjectiveRatingCriteria(prev => [...prev, newCriterion]);
                 }
-
                 setObjectiveData(prevData => {
                     const newData = { ...prevData };
                     suppliers.forEach(s => {
@@ -128,6 +126,8 @@
                     });
                     return newData;
                 });
+                setIsPaperExampleMode(false);
+                setResults(null);
             };
 
             const removeCriterion = (idToRemove, type) => {
@@ -142,7 +142,7 @@
                 } else {
                     setSubjectiveRatingCriteria(subjectiveRatingCriteria.filter(c => c.id !== idToRemove));
                 }
-
+                
                 setObjectiveData(prevData => {
                     const newData = { ...prevData };
                     suppliers.forEach(s => {
@@ -152,20 +152,18 @@
                     });
                     return newData;
                 });
-
-                if (bestCriterionId === idToRemove) setBestCriterionId('');
-                if (worstCriterionId === idToRemove) setWorstCriterionId('');
-                setBestToOthersComparisons(prev => {
-                    const newComparisons = { ...prev };
-                    delete newComparisons[idToRemove];
+                
+                setBwmComparisons(prev => {
+                    const newComparisons = {...prev};
+                    if (newComparisons.bestCriterionId === idToRemove) newComparisons.bestCriterionId = '';
+                    if (newComparisons.worstCriterionId === idToRemove) newComparisons.worstCriterionId = '';
+                    newComparisons.bestToOthers = Object.fromEntries(Object.entries(newComparisons.bestToOthers).filter(([key]) => key !== idToRemove));
+                    newComparisons.othersToWorst = Object.fromEntries(Object.entries(newComparisons.othersToWorst).filter(([key]) => key !== idToRemove));
                     return newComparisons;
                 });
-                setOthersToWorstComparisons(prev => {
-                    const newComparisons = { ...prev };
-                    delete newComparisons[idToRemove];
-                    return newComparisons;
-                });
-                if (selectedCriterionForIndividualPerformance === idToRemove) setSelectedCriterionForIndividualPerformance('');
+                setBwmCalculatedSubjectiveWeights({});
+                setIsPaperExampleMode(false);
+                setResults(null);
             };
 
             const handleCriterionChange = (id, field, value, type) => {
@@ -184,36 +182,53 @@
                         [criterionId]: parseFloat(value) || 0,
                     },
                 }));
+                setIsPaperExampleMode(false);
+                setResults(null);
+            };
+            
+            const handleBWMComparisonChange = React.useCallback((field, value) => {
+                setBwmComparisons(prev => ({ ...prev, [field]: value }));
+                setBwmCalculatedSubjectiveWeights({});
+                setResults(null);
+            }, []);
+            
+            const handleBestToOthersChange = (criterionId, value) => {
+                setBwmComparisons(prev => ({ ...prev, bestToOthers: { ...prev.bestToOthers, [criterionId]: parseInt(value) || 1 } }));
+                setBwmCalculatedSubjectiveWeights({});
+                setResults(null);
             };
 
-            // --- BWM Calculation ---
-            const calculateBWMWeights = useCallback(async () => {
+            const handleOthersToWorstChange = (criterionId, value) => {
+                setBwmComparisons(prev => ({ ...prev, othersToWorst: { ...prev.othersToWorst, [criterionId]: parseInt(value) || 1 } }));
+                setBwmCalculatedSubjectiveWeights({});
+                setResults(null);
+            };
+            
+            const calculateBWMWeights = React.useCallback(async () => {
                 setError('');
                 const allCriteria = [...objectiveCriteria, ...subjectiveRatingCriteria];
                 if (allCriteria.length < 2) {
                     showMessageBox('BWM Error', 'BWM requires at least two criteria for comparison.');
                     return;
                 }
-                if (!bestCriterionId || !worstCriterionId) {
-                    showMessageBox('BWM Error', 'Please select both a Best and a Worst Criterion.');
-                    return;
-                }
-                if (bestCriterionId === worstCriterionId) {
-                    showMessageBox('BWM Error', 'Best and Worst Criteria cannot be the same.');
+                const { bestCriterionId, worstCriterionId } = bwmComparisons;
+                if (!bestCriterionId || !worstCriterionId || bestCriterionId === worstCriterionId) {
+                    showMessageBox('BWM Error', 'Please select a Best and Worst Criterion that are different from each other.');
                     return;
                 }
 
                 setIsCalculatingBWM(true);
+                setIsPaperExampleMode(false);
+                setResults(null);
                 try {
-                    const criteriaIds = allCriteria.map(c => c.id);
                     const payload = {
-                        criteria_ids: criteriaIds,
+                        criteria_ids: allCriteria.map(c => c.id),
                         best_criterion_id: bestCriterionId,
                         worst_criterion_id: worstCriterionId,
-                        best_to_others: bestToOthersComparisons,
-                        others_to_worst: othersToWorstComparisons,
+                        best_to_others: bwmComparisons.bestToOthers,
+                        others_to_worst: bwmComparisons.othersToWorst,
                     };
-
+                    
                     const response = await fetch(`${BACKEND_URL}/calculate_bwm_weights`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -227,39 +242,38 @@
 
                     const data = await response.json();
                     setBwmCalculatedSubjectiveWeights(data.subjective_weights);
-                    showMessageBox('BWM Success', 'Subjective weights calculated successfully using BWM!');
+                    showMessageBox('BWM Success', 'Subjective weights calculated successfully!');
                 } catch (err) {
-                    setError(`BWM Calculation Error: ${err.message}.`);
+                    setError(`BWM Calculation Error: ${err.message}. Please ensure the Python backend is running and accessible at ${BACKEND_URL}.`);
                     setBwmCalculatedSubjectiveWeights({});
                 } finally {
                     setIsCalculatingBWM(false);
                 }
-            }, [bestCriterionId, worstCriterionId, bestToOthersComparisons, othersToWorstComparisons, objectiveCriteria, subjectiveRatingCriteria, showMessageBox, BACKEND_URL]);
+            }, [bwmComparisons, objectiveCriteria, subjectiveRatingCriteria, showMessageBox, BACKEND_URL]);
 
-            const handleBestToOthersChange = (criterionId, value) => {
-                setBestToOthersComparisons(prev => ({ ...prev, [criterionId]: parseInt(value) || 1 }));
-            };
-
-            const handleOthersToWorstChange = (criterionId, value) => {
-                setOthersToWorstComparisons(prev => ({ ...prev, [criterionId]: parseInt(value) || 1 }));
-            };
-
-            useEffect(() => {
+            React.useEffect(() => {
                 const allCriteria = [...objectiveCriteria, ...subjectiveRatingCriteria];
-                const initialBestToOthers = {};
-                const initialOthersToWorst = {};
-
-                allCriteria.forEach(c => {
-                    initialBestToOthers[c.id] = (c.id === bestCriterionId) ? 1 : (bestToOthersComparisons[c.id] || 1);
-                    initialOthersToWorst[c.id] = (c.id === worstCriterionId) ? 1 : (othersToWorstComparisons[c.id] || 1);
+                setBwmComparisons(prev => {
+                    const initialBestToOthers = {};
+                    const initialOthersToWorst = {};
+                    allCriteria.forEach(c => {
+                        initialBestToOthers[c.id] = prev.bestToOthers[c.id] || 1;
+                        initialOthersToWorst[c.id] = prev.othersToWorst[c.id] || 1;
+                    });
+                    return { ...prev, bestToOthers: initialBestToOthers, othersToWorst: initialOthersToWorst };
                 });
-                setBestToOthersComparisons(initialBestToOthers);
-                setOthersToWorstComparisons(initialOthersToWorst);
-            }, [bestCriterionId, worstCriterionId, objectiveCriteria, subjectiveRatingCriteria]);
+            }, [objectiveCriteria, subjectiveRatingCriteria]);
+            
+            const handleMabacWeightScenarioChange = (e) => {
+                setMabacWeightScenarioId(e.target.value);
+                setResults(null);
+            };
 
-
-            // --- Core Calculation Logic (GAPS and MABAC combined) ---
-            const calculateAllRankings = useCallback(() => {
+            const handleSelectedCriterionForChartChange = (e) => {
+                setSelectedCriterionForChart(e.target.value);
+            };
+            
+            const calculateScores = React.useCallback(() => {
                 setError('');
                 const allCriteria = [...objectiveCriteria, ...subjectiveRatingCriteria];
 
@@ -267,448 +281,429 @@
                     setError('Please add at least one supplier and one criterion.');
                     return;
                 }
-                if (Object.keys(bwmCalculatedSubjectiveWeights).length === 0 && allCriteria.length > 0) {
-                    setError('Please calculate subjective weights using BWM first.');
-                    return;
-                }
 
-                // --- Common Pre-calculations ---
-                const criterionRawValues = {};
+                let finalObjectiveWeights = {};
+                let finalSubjectiveWeights = {};
+                let finalIntegratedWeights = {};
+                let calculatedAPS = {};
+                let calculatedGammaMatrix = {};
+                let calculatedDifferenceMatrix = {};
+                let borderApproximationArea = {};
+                let normalizedMatrix = {};
+
+                const criterionRawValues = {}; 
                 allCriteria.forEach(c => {
-                    criterionRawValues[c.id] = [];
+                    criterionRawValues[c.id] = []; 
                     suppliers.forEach(s => {
                         const val = objectiveData[s.id]?.[c.id];
-                        criterionRawValues[c.id].push(val === undefined ? 0 : val);
+                        criterionRawValues[c.id].push(val === undefined ? 0 : val); 
                     });
                 });
 
-                // --- 1. Normalization (Paper 2 style) ---
-                const normalizedMatrix_paper2 = {}; // Z_hat from Paper 2
+                if (isPaperExampleMode) {
+                    if (currentMethod === 'GAPS') {
+                        finalObjectiveWeights = gapsPaperExampleWeights.objective;
+                        finalSubjectiveWeights = gapsPaperExampleWeights.subjective;
+                        finalIntegratedWeights = gapsPaperExampleWeights.integrated;
+                    } else if (currentMethod === 'MABAC') {
+                        finalSubjectiveWeights = mabacPaperExampleWeights[mabacWeightScenarioId];
+                        finalObjectiveWeights = {};
+                        finalIntegratedWeights = finalSubjectiveWeights;
+                    }
+                } else { // Custom Mode
+                    const normalizedMatrixForEntropy = {};
+                    allCriteria.forEach(c => {
+                        const values = criterionRawValues[c.id];
+                        const minVal = Math.min(...values);
+                        const maxVal = Math.max(...values);
+                        if (maxVal === minVal) {
+                            suppliers.forEach(s => {
+                                if (!normalizedMatrixForEntropy[s.id]) normalizedMatrixForEntropy[s.id] = {};
+                                normalizedMatrixForEntropy[s.id][c.id] = 0;
+                            });
+                            return;
+                        }
+                        suppliers.forEach(s => {
+                            const val = objectiveData[s.id]?.[c.id] || 0;
+                            let normalizedVal;
+                            if (c.type === 'benefit') {
+                                normalizedVal = (val - minVal) / (maxVal - minVal);
+                            } else {
+                                normalizedVal = (maxVal - val) / (maxVal - minVal);
+                            }
+                            if (!normalizedMatrixForEntropy[s.id]) normalizedMatrixForEntropy[s.id] = {};
+                            normalizedMatrixForEntropy[s.id][c.id] = normalizedVal;
+                        });
+                    });
+
+                    const lnN = Math.log(suppliers.length);
+                    const informationEntropy = {};
+                    const k = lnN === 0 ? 0 : -1 / lnN;
+                    allCriteria.forEach(c => {
+                        let sum_r_ln_r = 0;
+                        suppliers.forEach(s => {
+                            const r_val = normalizedMatrixForEntropy[s.id][c.id];
+                            if (r_val > 0) {
+                                sum_r_ln_r += r_val * Math.log(r_val);
+                            }
+                        });
+                        informationEntropy[c.id] = k * sum_r_ln_r;
+                    });
+
+                    const calculatedObjectiveWeights = {};
+                    let sum_1_minus_Il = 0;
+                    allCriteria.forEach(c => {
+                        sum_1_minus_Il += (1 - informationEntropy[c.id]);
+                    });
+                    allCriteria.forEach(c => {
+                        calculatedObjectiveWeights[c.id] = sum_1_minus_Il === 0 ? (1 / allCriteria.length) : (1 - informationEntropy[c.id]) / sum_1_minus_Il;
+                    });
+                    finalObjectiveWeights = calculatedObjectiveWeights;
+
+                    if (Object.keys(bwmCalculatedSubjectiveWeights).length === 0 && allCriteria.length > 0) {
+                        setError('Please calculate subjective weights using BWM first.');
+                        return;
+                    }
+                    finalSubjectiveWeights = bwmCalculatedSubjectiveWeights;
+
+                    if (currentMethod === 'GAPS') {
+                        const calculatedIntegratedWeights = {};
+                        let sum_wo_ws = 0;
+                        allCriteria.forEach(c => {
+                            const s_w = finalSubjectiveWeights[c.id] || 0;
+                            sum_wo_ws += finalObjectiveWeights[c.id] * s_w;
+                        });
+                        allCriteria.forEach(c => {
+                            const s_w = finalSubjectiveWeights[c.id] || 0;
+                            calculatedIntegratedWeights[c.id] = sum_wo_ws === 0 ? (1 / allCriteria.length) : (finalObjectiveWeights[c.id] * s_w) / sum_wo_ws;
+                        });
+                        finalIntegratedWeights = calculatedIntegratedWeights;
+                    } else if (currentMethod === 'MABAC') {
+                        finalIntegratedWeights = finalSubjectiveWeights;
+                    }
+                }
+                
                 allCriteria.forEach(c => {
                     const values = criterionRawValues[c.id];
-                    if (values.length === 0 || values.every(v => v === 0)) {
+                    const minVal = Math.min(...values);
+                    const maxVal = Math.max(...values);
+
+                    if (maxVal === minVal) {
                         suppliers.forEach(s => {
-                            if (!normalizedMatrix_paper2[s.id]) normalizedMatrix_paper2[s.id] = {};
-                            normalizedMatrix_paper2[s.id][c.id] = 0;
+                            if (!normalizedMatrix[s.id]) normalizedMatrix[s.id] = {};
+                            normalizedMatrix[s.id][c.id] = 0;
                         });
                         return;
                     }
 
-                    const minVal = Math.min(...values);
-                    const maxVal = Math.max(...values);
-
                     suppliers.forEach(s => {
                         const val = objectiveData[s.id]?.[c.id] || 0;
                         let normalizedVal;
-                        if (maxVal === minVal) { // Handle division by zero if all values are identical
-                            normalizedVal = 0; // Or 1 if it's a benefit criterion and all are max
-                        } else if (c.type === 'benefit') {
+                        if (c.type === 'benefit') {
                             normalizedVal = (val - minVal) / (maxVal - minVal);
-                        } else { // 'cost'
-                            normalizedVal = (maxVal - val) / (maxVal - minVal); // Corrected MABAC cost normalization
-                        }
-                        if (!normalizedMatrix_paper2[s.id]) normalizedMatrix_paper2[s.id] = {};
-                        normalizedMatrix_paper2[s.id][c.id] = normalizedVal;
-                    });
-                });
-
-                // --- Weights (from BWM backend) ---
-                const subjectiveWeights = bwmCalculatedSubjectiveWeights;
-
-                // --- Objective Weights (Entropy Weighting - unchanged from Paper 1 logic) ---
-                const lnN = Math.log(suppliers.length);
-                const informationEntropy = {};
-                const k = lnN === 0 ? 0 : -1 / lnN;
-
-                allCriteria.forEach(c => {
-                    let sum_r_ln_r = 0;
-                    suppliers.forEach(s => {
-                        const r_val = normalizedMatrix_paper2[s.id][c.id]; // Use paper2 norm for entropy
-                        if (r_val > 0) {
-                            sum_r_ln_r += r_val * Math.log(r_val);
-                        }
-                    });
-                    informationEntropy[c.id] = k * sum_r_ln_r;
-                });
-
-                const objectiveWeights = {};
-                let sum_1_minus_Il = 0;
-                allCriteria.forEach(c => {
-                    sum_1_minus_Il += (1 - informationEntropy[c.id]);
-                });
-                allCriteria.forEach(c => {
-                    objectiveWeights[c.id] = sum_1_minus_Il === 0 ? (1 / allCriteria.length) : (1 - informationEntropy[c.id]) / sum_1_minus_Il;
-                });
-
-                // --- Integrated Weights (Bayes' Theorem - unchanged from Paper 1 logic) ---
-                const integratedWeights = {};
-                let sum_wo_ws = 0;
-                allCriteria.forEach(c => {
-                    const s_w = subjectiveWeights[c.id] || 0;
-                    sum_wo_ws += objectiveWeights[c.id] * s_w;
-                });
-                allCriteria.forEach(c => {
-                    const s_w = subjectiveWeights[c.id] || 0;
-                    integratedWeights[c.id] = sum_wo_ws === 0 ? (1 / allCriteria.length) : (objectiveWeights[c.id] * s_w) / sum_wo_ws;
-                });
-
-
-                // ===========================================
-                // --- GAPS Calculation (Paper 1 Logic) ---
-                // ===========================================
-                const weightedNormalizedMatrix_gaps = {}; // Z from Paper 1 (different from Z_hat)
-                suppliers.forEach(s => {
-                    weightedNormalizedMatrix_gaps[s.id] = {};
-                    allCriteria.forEach(c => {
-                        // GAPS uses a direct min-max normalization before weighting, not the MABAC transformation
-                        // For consistency with original GAPS, let's re-calculate min-max for GAPS specifically
-                        const values = criterionRawValues[c.id];
-                        const minVal = Math.min(...values);
-                        const maxVal = Math.max(...values);
-                        let normalizedVal_gaps;
-
-                        if (maxVal === minVal) {
-                            normalizedVal_gaps = 0;
                         } else {
-                            const val = objectiveData[s.id]?.[c.id] || 0;
-                            if (c.type === 'benefit') {
-                                normalizedVal_gaps = (val - minVal) / (maxVal - minVal);
+                            normalizedVal = (maxVal - val) / (maxVal - minVal);
+                        }
+                        if (!normalizedMatrix[s.id]) normalizedMatrix[s.id] = {};
+                        normalizedMatrix[s.id][c.id] = normalizedVal;
+                    });
+                });
+
+                if (currentMethod === 'GAPS') {
+                    const weightedNormalizedMatrix = {};
+                    suppliers.forEach(s => {
+                        weightedNormalizedMatrix[s.id] = {};
+                        allCriteria.forEach(c => {
+                            const valuesForNormalization = criterionRawValues[c.id];
+                            const minVal = Math.min(...valuesForNormalization);
+                            const maxVal = Math.max(...valuesForNormalization);
+                            let currentNormalizedVal;
+                            if (maxVal === minVal) {
+                                currentNormalizedVal = 0;
                             } else {
-                                normalizedVal_gaps = (maxVal - val) / (maxVal - minVal);
+                                const val = objectiveData[s.id]?.[c.id] || 0;
+                                if (c.type === 'benefit') {
+                                    currentNormalizedVal = (val - minVal) / (maxVal - minVal);
+                                } else {
+                                    currentNormalizedVal = (maxVal - val) / (maxVal - minVal);
+                                }
                             }
-                        }
-                        weightedNormalizedMatrix_gaps[s.id][c.id] = normalizedVal_gaps * integratedWeights[c.id];
-                    });
-                });
-
-                const geometricMeanMatrix_gaps = {};
-                allCriteria.forEach(c => {
-                    let product = 1;
-                    const validWeightedNormalizedValues = [];
-                    suppliers.forEach(s => {
-                        const val = weightedNormalizedMatrix_gaps[s.id][c.id];
-                        if (val !== undefined && val !== null && !isNaN(val)) {
-                            validWeightedNormalizedValues.push(val);
-                        }
-                    });
-
-                    if (validWeightedNormalizedValues.length > 0) {
-                        product = validWeightedNormalizedValues.reduce((acc, val) => acc * (val === 0 ? 1e-9 : val), 1);
-                        geometricMeanMatrix_gaps[c.id] = suppliers.length === 0 ? 0 : Math.pow(product, 1 / suppliers.length);
-                    } else {
-                        geometricMeanMatrix_gaps[c.id] = 0;
-                    }
-                });
-
-                const differenceMatrix_gaps = {};
-                suppliers.forEach(s => {
-                    differenceMatrix_gaps[s.id] = {};
-                    allCriteria.forEach(c => {
-                        differenceMatrix_gaps[s.id][c.id] = weightedNormalizedMatrix_gaps[s.id][c.id] - geometricMeanMatrix_gaps[c.id];
-                    });
-                });
-
-                const supplierScores_gaps = suppliers.map(s => {
-                    let gaps = 0;
-                    allCriteria.forEach(c => {
-                        gaps += differenceMatrix_gaps[s.id][c.id];
-                    });
-                    return { id: s.id, name: s.name, score: gaps };
-                }).sort((a, b) => b.score - a.score);
-
-                setGapsResults({
-                    normalizedMatrix: normalizedMatrix_paper2, // We'll keep one standard norm for display
-                    objectiveWeights,
-                    subjectiveWeights,
-                    integratedWeights,
-                    weightedNormalizedMatrix: weightedNormalizedMatrix_gaps,
-                    geometricMeanMatrix: geometricMeanMatrix_gaps,
-                    differenceMatrix: differenceMatrix_gaps,
-                    supplierScores: supplierScores_gaps,
-                });
-
-                // ===========================================
-                // --- MABAC Calculation (Paper 2 Logic) ---
-                // ===========================================
-
-                // Step 2: Obtain the weighted normalized decision matrix (Y)
-                const weightedNormalizedMatrix_mabac = {}; // Y from Paper 2
-                suppliers.forEach(s => {
-                    weightedNormalizedMatrix_mabac[s.id] = {};
-                    allCriteria.forEach(c => {
-                        // MABAC: Y_kh = (z_hat_kh + 1) * w_h^*
-                        weightedNormalizedMatrix_mabac[s.id][c.id] = (normalizedMatrix_paper2[s.id][c.id] + 1) * (integratedWeights[c.id] || 0);
-                    });
-                });
-
-                // Step 3: Form the border approximation area matrix (B)
-                const borderApproximationArea = {}; // B from Paper 2
-                allCriteria.forEach(c => {
-                    let product = 1;
-                    const validWeightedNormalizedValuesPlusOne = [];
-                    suppliers.forEach(s => {
-                        const val = (normalizedMatrix_paper2[s.id][c.id] + 1); // z_hat + 1
-                         if (val !== undefined && val !== null && !isNaN(val)) {
-                            validWeightedNormalizedValuesPlusOne.push(val);
-                        }
-                    });
-
-                    if (validWeightedNormalizedValuesPlusOne.length > 0) {
-                        // Product of (z_hat_kh + 1) raised to (w_h^*) then to the power of 1/n'
-                        product = validWeightedNormalizedValuesPlusOne.reduce((acc, val) => acc * (val === 0 ? 1e-9 : val), 1);
-                        borderApproximationArea[c.id] = suppliers.length === 0 ? 0 : Math.pow(product, integratedWeights[c.id] || 0) ; // Typo in paper? Eq 16 uses (product of (w_k*z_k+1))^(1/n')
-                        // Re-interpreting: B_h = (product_{k=1}^{n'} (z_hat_kh + 1)^(w_h^*)) ^ (1/n')
-                        // No, the paper's equation is B_h = (product_{k=1}^{n'} w_k^*(z_hat_kh+1))^(1/n')
-                        // This implies that w_k* is a weight *per supplier* for that criterion, which is odd.
-                        // Let's go with a more common interpretation of MABAC's B_h: it's the geometric mean of the weighted (z_hat + 1) values for a given criterion.
-                        // Or, often the BAA is defined as a fixed point, not a geometric mean of products *of weights*.
-                        // Given the formula B_h = (product_{k=1}^{n'} (w_k^* (z_hat_kh + 1)) )^(1/n') in Paper 2 
-                        // This seems like a potential misinterpretation in the paper's equation or a unique variant.
-                        // Let's use the most common MABAC BAA definition if the paper's formula is problematic:
-                        // B_h = geometric_mean(Y_kh values for that criterion) - No, that's what GAPS uses.
-
-                        // STICKING TO THE PAPER'S FORMULA (Eq. 16) but assuming w_k* is integrated weight.
-                        // B_h = (product_{k=1}^{n'} (integratedWeights[c.id] * (normalizedMatrix_paper2[s.id][c.id] + 1)))^(1/n')
-                        let productForBh = 1;
-                        suppliers.forEach(s => {
-                            const term = (integratedWeights[c.id] || 0) * (normalizedMatrix_paper2[s.id][c.id] + 1);
-                            productForBh *= (term === 0 ? 1e-9 : term); // Avoid log(0)
+                            weightedNormalizedMatrix[s.id][c.id] = currentNormalizedVal * (finalIntegratedWeights[c.id] || 0);
                         });
-                        borderApproximationArea[c.id] = (suppliers.length === 0 || productForBh === 0) ? 0 : Math.pow(productForBh, 1 / suppliers.length);
-                    } else {
-                        borderApproximationArea[c.id] = 0;
-                    }
-                });
-
-
-                // Step 4: Determine the distances of the candidate alternatives from B (Γ)
-                const differenceMatrix_mabac = {}; // Gamma from Paper 2
-                suppliers.forEach(s => {
-                    differenceMatrix_mabac[s.id] = {};
-                    allCriteria.forEach(c => {
-                        differenceMatrix_mabac[s.id][c.id] = weightedNormalizedMatrix_mabac[s.id][c.id] - borderApproximationArea[c.id];
                     });
-                });
 
-                // Step 5: Rank the alternatives (APS)
-                const supplierScores_mabac = suppliers.map(s => {
-                    let aps = 0;
+                    const geometricMeanMatrix = {};
                     allCriteria.forEach(c => {
-                        aps += differenceMatrix_mabac[s.id][c.id];
+                        let product = 1;
+                        suppliers.forEach(s => {
+                            product *= (weightedNormalizedMatrix[s.id][c.id] === 0 ? 0.000001 : weightedNormalizedMatrix[s.id][c.id]);
+                        });
+                        geometricMeanMatrix[c.id] = suppliers.length === 0 ? 0 : Math.pow(product, 1 / suppliers.length);
                     });
-                    return { id: s.id, name: s.name, score: aps };
-                }).sort((a, b) => b.score - a.score);
 
-                setMabacResults({
-                    normalizedMatrix: normalizedMatrix_paper2,
-                    objectiveWeights,
-                    subjectiveWeights,
-                    integratedWeights,
-                    weightedNormalizedMatrix: weightedNormalizedMatrix_mabac,
-                    borderApproximationArea,
-                    differenceMatrix: differenceMatrix_mabac,
-                    supplierScores: supplierScores_mabac,
-                });
+                    const differenceMatrix = {};
+                    suppliers.forEach(s => {
+                        differenceMatrix[s.id] = {};
+                        allCriteria.forEach(c => {
+                            differenceMatrix[s.id][c.id] = weightedNormalizedMatrix[s.id][c.id] - geometricMeanMatrix[c.id];
+                        });
+                    });
+                    calculatedDifferenceMatrix = differenceMatrix;
 
-            }, [suppliers, objectiveCriteria, subjectiveRatingCriteria, objectiveData, bwmCalculatedSubjectiveWeights]);
+                    const supplierScores = suppliers.map(s => {
+                        let gaps = 0;
+                        allCriteria.forEach(c => {
+                            gaps += differenceMatrix[s.id][c.id];
+                        });
+                        return {
+                            id: s.id,
+                            name: s.name,
+                            score: gaps,
+                        };
+                    }).sort((a, b) => b.score - a.score);
 
-            useEffect(() => {
-                if (Object.keys(bwmCalculatedSubjectiveWeights).length > 0 || [...objectiveCriteria, ...subjectiveRatingCriteria].length === 0) {
-                    calculateAllRankings();
+                    setResults({
+                        method: 'GAPS',
+                        normalizedMatrix: normalizedMatrix,
+                        objectiveWeights: finalObjectiveWeights,
+                        subjectiveWeights: finalSubjectiveWeights,
+                        integratedWeights: finalIntegratedWeights,
+                        weightedNormalizedMatrix,
+                        geometricMeanMatrix,
+                        differenceMatrix: calculatedDifferenceMatrix,
+                        supplierScores,
+                        gammaMatrix: null,
+                        apsScores: null
+                    });
+
+                } else if (currentMethod === 'MABAC') {
+                    const normalizedMABACMatrix = normalizedMatrix;
+
+                    const weightedNormalizedMABACMatrix = {};
+                    suppliers.forEach(s => {
+                        weightedNormalizedMABACMatrix[s.id] = {};
+                        allCriteria.forEach(c => {
+                            const whz = finalSubjectiveWeights[c.id] || 0;
+                            weightedNormalizedMABACMatrix[s.id][c.id] = whz * (normalizedMABACMatrix[s.id][c.id] + 1);
+                        });
+                    });
+
+                    const borderApproximationArea = {};
+                    allCriteria.forEach(c => {
+                        let product = 1;
+                        suppliers.forEach(s => {
+                            product *= (weightedNormalizedMABACMatrix[s.id][c.id] === 0 ? 0.000001 : weightedNormalizedMABACMatrix[s.id][c.id]);
+                        });
+                        borderApproximationArea[c.id] = suppliers.length === 0 ? 0 : Math.pow(product, 1 / suppliers.length);
+                    });
+
+                    const gammaMatrix = {};
+                    suppliers.forEach(s => {
+                        gammaMatrix[s.id] = {};
+                        allCriteria.forEach(c => {
+                            gammaMatrix[s.id][c.id] = weightedNormalizedMABACMatrix[s.id][c.id] - borderApproximationArea[c.id];
+                        });
+                    });
+                    calculatedGammaMatrix = gammaMatrix;
+
+                    const apsScores = suppliers.map(s => {
+                        let aps = 0;
+                        allCriteria.forEach(c => {
+                            aps += gammaMatrix[s.id][c.id];
+                        });
+                        return {
+                            id: s.id,
+                            name: s.name,
+                            score: aps,
+                        };
+                    }).sort((a, b) => b.score - a.score);
+                    calculatedAPS = apsScores;
+                    
+                    const finalSubjectiveWeightsForMabac = isPaperExampleMode ? mabacPaperExampleWeights[mabacWeightScenarioId] : finalSubjectiveWeights;
+                    
+                    setResults({
+                        method: 'MABAC',
+                        normalizedMatrix: normalizedMABACMatrix,
+                        objectiveWeights: finalObjectiveWeights,
+                        subjectiveWeights: finalSubjectiveWeightsForMabac,
+                        integratedWeights: finalSubjectiveWeightsForMabac,
+                        weightedNormalizedMatrix: weightedNormalizedMABACMatrix,
+                        geometricMeanMatrix: {},
+                        differenceMatrix: null,
+                        supplierScores: calculatedAPS,
+                        gammaMatrix: calculatedGammaMatrix,
+                        apsScores: calculatedAPS,
+                        borderApproximationArea: borderApproximationArea
+                    });
                 }
-            }, [calculateAllRankings, bwmCalculatedSubjectiveWeights, objectiveCriteria, subjectiveRatingCriteria]);
+
+            }, [suppliers, objectiveCriteria, subjectiveRatingCriteria, objectiveData, bwmCalculatedSubjectiveWeights, isPaperExampleMode, gapsPaperExampleWeights, mabacPaperExampleWeights, mabacWeightScenarioId, currentMethod]);
+
+            React.useEffect(() => {
+                if ((Object.keys(bwmCalculatedSubjectiveWeights).length > 0 && !isPaperExampleMode) || isPaperExampleMode || [...objectiveCriteria, ...subjectiveRatingCriteria].length === 0) {
+                    calculateScores();
+                }
+            }, [calculateScores, bwmCalculatedSubjectiveWeights, isPaperExampleMode, objectiveCriteria, subjectiveRatingCriteria]);
+            
+            React.useEffect(() => {
+                if (isPaperExampleMode && currentMethod === 'MABAC' && results && results.gammaMatrix) {
+                    const mabacCriteria = allCriteria.filter(c => mabacPaperExampleWeights.expert1[c.id] !== undefined);
+                    const firstCriterionId = mabacCriteria.length > 0 ? mabacCriteria[0].id : '';
+                    setSelectedCriterionForChart(firstCriterionId);
+                }
+            }, [isPaperExampleMode, currentMethod, results, mabacPaperExampleWeights]);
 
 
             const allCriteria = [...objectiveCriteria, ...subjectiveRatingCriteria];
-            const currentResults = activeRankingMethod === 'GAPS' ? gapsResults : mabacResults;
+            const allMabacCriteria = [...objectiveCriteria, ...subjectiveRatingCriteria].filter(c => ['pt', 'dr', 'ci', 'ta', 'g', 'fm', 'r'].includes(c.id));
+
+            const loadGAPSExample = () => {
+                setError('');
+                setResults(null);
+                setBwmCalculatedSubjectiveWeights({});
+                setBwmComparisons({ bestCriterionId: '', worstCriterionId: '', bestToOthers: {}, othersToWorst: {} });
+                
+                const exampleSuppliers = [
+                    { id: 'atl', name: 'ATL (Hartsfield-Jackson Atlanta Int.)' },
+                    { id: 'pek', name: 'PEK (Beijing Capital Int.)' },
+                    { id: 'lax', name: 'LAX (Los Angeles Int.)' },
+                ];
+                setSuppliers(exampleSuppliers);
+
+                const exampleObjectiveCriteria = [
+                    { id: 'pt', name: 'Passenger Throughput (PT)', type: 'benefit' },
+                    { id: 'am', name: 'Aircraft Movement (AM)', type: 'benefit' },
+                    { id: 'ct', name: 'Cargo Throughput (CT)', type: 'benefit' },
+                    { id: 'dc', name: 'Degree Centrality (DC)', type: 'benefit' },
+                    { id: 'bc', name: 'Betweenness Centrality (BC)', type: 'benefit' },
+                ];
+                setObjectiveCriteria(exampleObjectiveCriteria);
+                setSubjectiveRatingCriteria([]);
+
+                const exampleObjectiveData = {
+                    atl: { pt: 110531300, am: 904301, ct: 640276, dc: 272, bc: 151608 },
+                    pek: { pt: 100011438, am: 594329, ct: 1957779, dc: 256, bc: 329324 },
+                    lax: { pt: 88068013, am: 691257, ct: 2518053, dc: 237, bc: 286551 },
+                };
+                setObjectiveData(exampleObjectiveData);
+
+                const paperObjWeights = { pt: 0.30, am: 0.18, ct: 0.27, dc: 0.13, bc: 0.12 };
+                const paperSubjWeights = { pt: 0.29, am: 0.16, ct: 0.26, dc: 0.20, bc: 0.09 };
+                const paperIntWeights = { pt: 0.38, am: 0.13, ct: 0.32, dc: 0.12, bc: 0.05 };
+                setGapsPaperExampleWeights({ objective: paperObjWeights, subjective: paperSubjWeights, integrated: paperIntWeights });
+
+                setIsPaperExampleMode(true);
+                setCurrentMethod('GAPS');
+                showMessageBox('GAPS Paper Example Loaded', 'Data and weights from the first research paper (ATL, PEK, LAX) have been loaded. Click "Calculate Supplier Scores" to see results matching the paper.');
+            };
+
+            // --- Function to Load Paper Example (MABAC) ---
+            const loadMABACExample = () => {
+                setError('');
+                setResults(null);
+                setBwmCalculatedSubjectiveWeights({});
+                setBwmComparisons({ bestCriterionId: '', worstCriterionId: '', bestToOthers: {}, othersToWorst: {} });
+
+                const exampleSuppliers = [
+                    { id: 'pek', name: 'PEK (Beijing Capital Int.)' }, { id: 'csx', name: 'CSX (Changsha Huanghua Int.)' },
+                    { id: 'ctu', name: 'CTU (Chengdu Shuangliu Int.)' }, { id: 'dlc', name: 'DLC (Dalian Zhoushuizi Int.)' },
+                    { id: 'foc', name: 'FOC (Fuzhou Changle Int.)' }, { id: 'can', name: 'CAN (Guangzhou Baiyun Int.)' },
+                    { id: 'het', name: 'HET (Hohhot Baita Int.)' }, { id: 'kmg', name: 'KMG (Kunming Changshui Int.)' },
+                    { id: 'lhw', name: 'LHW (Lanzhou Zhongchuan Int.)' }, { id: 'lxa', name: 'LXA (Lhasa Kongga Int.)' },
+                    { id: 'nkg', name: 'NKG (Nanjing Lukou Int.)' }, { id: 'ngb', name: 'NGB (Ningbo Lishe Int.)' },
+                    { id: 'tao', name: 'TAO (Qingdao Liuting Int.)' }, { id: 'sha', name: 'SHA (Shanghai Hongqiao Int.)' },
+                    { id: 'szx', name: 'SZX (Shenzhen Bao\'an Int.)' }, { id: 'xiy', name: 'XIY (Xi\'an Xianyang Int.)' },
+                    { id: 'cgo', name: 'CGO (Zhengzhou Xinzheng Int.)' },
+                ];
+                setSuppliers(exampleSuppliers);
+
+                const exampleObjectiveCriteria = [
+                    { id: 'pt', name: 'Passenger Throughput (PT)', type: 'benefit' }, { id: 'dr', name: 'No. of Direct Routes (DR)', type: 'benefit' },
+                    { id: 'ci', name: 'No. of Check-in Counters (CI)', type: 'benefit' }, { id: 'ta', name: 'Terminal Area (TA)', type: 'benefit' },
+                    { id: 'g', name: 'No. of Gates (G)', type: 'benefit' }, { id: 'fm', name: 'No. of Flights (FM)', type: 'benefit' },
+                    { id: 'r', name: 'No. of Runways (R)', type: 'benefit' },
+                ];
+                setObjectiveCriteria(exampleObjectiveCriteria);
+                setSubjectiveRatingCriteria([]);
+
+                const exampleObjectiveData = {
+                    pek: { pt: 100013642, dr: 458, ci: 577, ta: 1410000, g: 195, fm: 594329, r: 3 },
+                    csx: { pt: 26911393, dr: 193, ci: 102, ta: 212000, g: 32, fm: 196213, r: 1 },
+                    ctu: { pt: 55858552, dr: 323, ci: 201, ta: 500000, g: 110, fm: 366887, r: 2 },
+                    dlc: { pt: 20079995, dr: 162, ci: 93, ta: 135000, g: 18, fm: 154976, r: 1 },
+                    foc: { pt: 14760226, dr: 103, ci: 39, ta: 216000, g: 54, fm: 112746, r: 1 },
+                    can: { pt: 73378475, dr: 328, ci: 644, ta: 1403700, g: 204, fm: 491249, r: 3 },
+                    het: { pt: 13151840, dr: 113, ci: 40, ta: 54400, g: 29, fm: 112159, r: 2 },
+                    kmg: { pt: 48075978, dr: 306, ci: 160, ta: 548300, g: 84, fm: 357080, r: 2 },
+                    lhw: { pt: 15302975, dr: 126, ci: 50, ta: 90000, g: 20, fm: 119183, r: 1 },
+                    lxa: { pt: 4572428, dr: 44, ci: 16, ta: 25000, g: 4, fm: 39065, r: 1 },
+                    nkg: { pt: 30581685, dr: 199, ci: 112, ta: 425000, g: 42, fm: 234869, r: 2 },
+                    ngb: { pt: 12414007, dr: 101, ci: 34, ta: 43500, g: 28, fm: 89487, r: 1 },
+                    tao: { pt: 25556278, dr: 174, ci: 97, ta: 120000, g: 22, fm: 186500, r: 1 },
+                    sha: { pt: 45637882, dr: 187, ci: 188, ta: 444600, g: 102, fm: 272928, r: 2 },
+                    szx: { pt: 52931925, dr: 247, ci: 192, ta: 451000, g: 82, fm: 370180, r: 2 },
+                    xiy: { pt: 47220547, dr: 297, ci: 140, ta: 350000, g: 74, fm: 345748, r: 2 },
+                    cgo: { pt: 29129328, dr: 198, ci: 154, ta: 620000, g: 70, fm: 216399, r: 1 },
+                };
+                setObjectiveData(exampleObjectiveData);
+
+                const expert1Weights = { pt: 0.359, dr: 0.139, ci: 0.083, ta: 0.104, g: 0.069, fm: 0.209, r: 0.033 };
+                const expert2Weights = { pt: 0.211, dr: 0.141, ci: 0.052, ta: 0.128, g: 0.070, fm: 0.361, r: 0.033 };
+                setMabacPaperExampleWeights({ expert1: expert1Weights, expert2: expert2Weights });
+                setMabacWeightScenarioId('expert1');
+
+                setIsPaperExampleMode(true);
+                setCurrentMethod('MABAC');
+                setSelectedCriterionForChart('pt');
+                showMessageBox('MABAC Paper Example Loaded', 'Data and weights from the second research paper (Chinese airports) have been loaded. Select a Weight Scenario and Criterion to visualize, then click "Calculate Supplier Scores".');
+            };
 
 
-            // --- PDF Export Function ---
             const exportResultsToPdf = () => {
                 if (typeof window.html2canvas === 'undefined' || typeof window.jspdf === 'undefined') {
                     showMessageBox('Export Error', 'PDF generation libraries are not loaded. Please ensure internet connectivity or try again.');
+                    console.error("PDF generation error:", err);
                     return;
                 }
+
                 const input = document.getElementById('results-section');
                 if (!input) {
                     showMessageBox('Export Error', 'Results section not found. Please calculate results first.');
                     return;
                 }
+
                 const exportButton = document.getElementById('export-pdf-button');
                 if (exportButton) exportButton.style.display = 'none';
 
-                window.html2canvas(input, { scale: 2, useCORS: true })
+                window.html2canvas(input, { scale: 2 })
                     .then((canvas) => {
                         const imgData = canvas.toDataURL('image/png');
                         const pdf = new window.jspdf.jsPDF('p', 'mm', 'a4');
                         const imgWidth = 210;
                         const pageHeight = 297;
-                        const imgHeight = canvas.height * imgWidth / canvas.width;
                         let heightLeft = imgHeight;
                         let position = 0;
 
                         pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
                         heightLeft -= pageHeight;
 
-                        while (heightLeft > 0) {
+                        while (heightLeft >= 0) {
                             position = heightLeft - imgHeight;
                             pdf.addPage();
                             pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
                             heightLeft -= pageHeight;
                         }
-                        pdf.save(`Supplier_Selection_Results_${activeRankingMethod}.pdf`);
+
+                        pdf.save('Supplier_Selection_Results.pdf');
                     })
                     .catch(err => {
                         showMessageBox('Export Error', `Failed to generate PDF: ${err.message}`);
+                        console.error("PDF generation error:", err);
                     })
                     .finally(() => {
                         if (exportButton) exportButton.style.display = 'block';
                     });
             };
-
-            // --- Individual Performance Chart (Bar Chart) ---
-            useEffect(() => {
-                // Use currentResults to determine which set of results to use for the chart
-                const relevantResults = activeRankingMethod === 'GAPS' ? gapsResults : mabacResults;
-
-                if (!relevantResults || !selectedCriterionForIndividualPerformance) {
-                    if (individualPerformanceChartRef.current) {
-                        Chart.getChart(individualPerformanceChartRef.current)?.destroy();
-                    }
-                    return;
-                }
-
-                const chartData = suppliers.map(s => ({
-                    name: s.name,
-                    // Use the appropriate difference matrix based on active method
-                    score: relevantResults.differenceMatrix[s.id]?.[selectedCriterionForIndividualPerformance] || 0
-                }));
-
-                const existingChart = Chart.getChart(individualPerformanceChartRef.current);
-                if (existingChart) {
-                    existingChart.destroy();
-                }
-
-                const ctx = individualPerformanceChartRef.current.getContext('2d');
-                new Chart(ctx, {
-                    type: 'bar',
-                    data: {
-                        labels: chartData.map(d => d.name),
-                        datasets: [{
-                            label: `Performance Score for ${allCriteria.find(c => c.id === selectedCriterionForIndividualPerformance)?.name} (${activeRankingMethod} Difference)`,
-                            data: chartData.map(d => d.score),
-                            backgroundColor: chartData.map(d => d.score >= 0 ? 'rgba(75, 192, 192, 0.6)' : 'rgba(255, 99, 132, 0.6)'),
-                            borderColor: chartData.map(d => d.score >= 0 ? 'rgba(75, 192, 192, 1)' : 'rgba(255, 99, 132, 1)'),
-                            borderWidth: 1
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                            legend: { display: true, position: 'top' },
-                            title: {
-                                display: true,
-                                text: `Supplier Performance by ${allCriteria.find(c => c.id === selectedCriterionForIndividualPerformance)?.name} (${activeRankingMethod} Difference)`,
-                                font: { size: 16 }
-                            }
-                        },
-                        scales: {
-                            y: {
-                                beginAtZero: false,
-                                title: { display: true, text: 'Performance Score' }
-                            }
-                        }
-                    }
-                });
-            }, [gapsResults, mabacResults, selectedCriterionForIndividualPerformance, suppliers, allCriteria, activeRankingMethod]);
-
-
-            // --- Radar Chart (Performance Across All Criteria for Selected Suppliers) ---
-            useEffect(() => {
-                // Use currentResults to determine which set of results to use for the chart
-                const relevantResults = activeRankingMethod === 'GAPS' ? gapsResults : mabacResults;
-
-                if (!relevantResults || selectedSuppliersForRadarChart.length === 0) {
-                    if (radarChartRef.current) {
-                        Chart.getChart(radarChartRef.current)?.destroy();
-                    }
-                    return;
-                }
-
-                const labels = allCriteria.map(c => c.name);
-                const datasets = selectedSuppliersForRadarChart.map((supplierId, index) => {
-                    const supplier = suppliers.find(s => s.id === supplierId);
-                    if (!supplier) return null;
-
-                    // Use the appropriate weighted normalized matrix
-                    const dataPoints = allCriteria.map(c => relevantResults.weightedNormalizedMatrix[supplierId]?.[c.id]?.toFixed(4) || 0);
-
-                    const colors = [
-                        'rgba(255, 99, 132, 0.8)', 'rgba(54, 162, 235, 0.8)', 'rgba(255, 206, 86, 0.8)',
-                        'rgba(75, 192, 192, 0.8)', 'rgba(153, 102, 255, 0.8)', 'rgba(255, 159, 64, 0.8)',
-                        'rgba(199, 199, 199, 0.8)', 'rgba(83, 102, 102, 0.8)'
-                    ];
-                    const borderColor = colors[index % colors.length].replace('0.8', '1');
-                    const backgroundColor = colors[index % colors.length].replace('0.8', '0.2');
-
-                    return {
-                        label: supplier.name,
-                        data: dataPoints,
-                        backgroundColor: backgroundColor,
-                        borderColor: borderColor,
-                        borderWidth: 2,
-                        pointBackgroundColor: borderColor,
-                        pointBorderColor: '#fff',
-                        pointHoverBackgroundColor: '#fff',
-                        pointHoverBorderColor: borderColor,
-                    };
-                }).filter(Boolean);
-
-                const existingChart = Chart.getChart(radarChartRef.current);
-                if (existingChart) {
-                    existingChart.destroy();
-                }
-
-                const ctx = radarChartRef.current.getContext('2d');
-                new Chart(ctx, {
-                    type: 'radar',
-                    data: { labels: labels, datasets: datasets },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                            legend: { display: true, position: 'top' },
-                            title: {
-                                display: true,
-                                text: `Supplier Performance Across Criteria (${activeRankingMethod} Weighted Normalized Scores)`,
-                                font: { size: 16 }
-                            },
-                            tooltip: {
-                                callbacks: {
-                                    label: function(context) {
-                                        let label = context.dataset.label || '';
-                                        if (label) { label += ': '; }
-                                        if (context.parsed.r !== null) {
-                                            label += new Intl.NumberFormat('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 }).format(context.parsed.r);
-                                        }
-                                        return label;
-                                    }
-                                }
-                            }
-                        },
-                        scales: {
-                            r: {
-                                angleLines: { display: true },
-                                suggestedMin: 0,
-                                suggestedMax: 1,
-                                ticks: { backdropColor: 'transparent', color: 'rgba(0, 0, 0, 0.7)' },
-                                pointLabels: { font: { size: 12, weight: 'bold' }, color: 'rgba(0, 0, 0, 0.8)' }
-                            }
-                        }
-                    }
-                });
-            }, [gapsResults, mabacResults, selectedSuppliersForRadarChart, suppliers, allCriteria, activeRankingMethod]);
 
 
             return (
@@ -717,10 +712,6 @@
                         <h1 className="text-3xl sm:text-4xl font-extrabold text-gray-900 mb-6 text-center">
                             Supplier Selection Tool
                         </h1>
-                        <p className="text-gray-600 mb-8 text-center max-w-2xl mx-auto">
-                            Evaluate and rank suppliers using a multi-criteria approach, combining objective data with subjective preferences. This tool implements both the GAPS (inspired by Paper 1) and MABAC (inspired by Paper 2) methodologies. Subjective weights are calculated using the Best-Worst Method (BWM) via a Python backend.
-                        </p>
-
                         {error && (
                             <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-md relative mb-4" role="alert">
                                 <strong className="font-bold">Error!</strong>
@@ -728,6 +719,7 @@
                             </div>
                         )}
 
+                        {/* Message Box Modal */}
                         {messageBox.show && (
                             <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center z-50">
                                 <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full">
@@ -742,6 +734,55 @@
                                 </div>
                             </div>
                         )}
+
+                        {/* Methodology Selection Buttons */}
+                        <div className="text-center mb-8 flex flex-col sm:flex-row justify-center gap-4">
+                            <button
+                                onClick={() => {
+                                    setCurrentMethod('GAPS');
+                                    setIsPaperExampleMode(false);
+                                    setResults(null);
+                                    setError('');
+                                }}
+                                className={`flex-1 max-w-xs bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-4 rounded-md shadow-md transition duration-300 ease-in-out ${currentMethod === 'GAPS' && !isPaperExampleMode ? 'ring-2 ring-indigo-700' : ''}`}
+                            >
+                                Custom GAPS Calculation
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setCurrentMethod('MABAC');
+                                    setIsPaperExampleMode(false);
+                                    setResults(null);
+                                    setError('');
+                                }}
+                                className={`flex-1 max-w-xs bg-purple-500 hover:bg-purple-600 text-white font-bold py-2 px-4 rounded-md shadow-md transition duration-300 ease-in-out ${currentMethod === 'MABAC' && !isPaperExampleMode ? 'ring-2 ring-purple-700' : ''}`}
+                            >
+                                Custom MABAC Calculation
+                            </button>
+                        </div>
+
+
+                        {/* Paper Example Load Buttons */}
+                        <div className="text-center mb-8 flex flex-col sm:flex-row justify-center gap-4">
+                            <button
+                                onClick={loadGAPSExample}
+                                className={`flex-1 max-w-xs bg-orange-500 hover:bg-orange-600 text-white font-bold py-2 px-6 rounded-md shadow-lg transform transition duration-300 ease-in-out hover:scale-105 ${isPaperExampleMode && currentMethod === 'GAPS' ? 'ring-2 ring-orange-700' : ''}`}
+                            >
+                                Load Paper Example (GAPS)
+                            </button>
+                            <button
+                                onClick={loadMABACExample}
+                                className={`flex-1 max-w-xs bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-6 rounded-md shadow-lg transform transition duration-300 ease-in-out hover:scale-105 ${isPaperExampleMode && currentMethod === 'MABAC' ? 'ring-2 ring-teal-700' : ''}`}
+                            >
+                                Load Paper Example (MABAC)
+                            </button>
+                        </div>
+                        {isPaperExampleMode && (
+                            <p className="text-sm text-orange-700 mb-4 text-center">
+                                *Currently in Paper Example Mode for {currentMethod}. Data and weights are pre-set from the paper for validation.*
+                            </p>
+                        )}
+
 
                         {/* Supplier Management Section */}
                         <div className="mb-8 p-6 bg-blue-50 rounded-lg shadow-inner">
@@ -758,11 +799,13 @@
                                             onChange={(e) => handleSupplierNameChange(s.id, e.target.value)}
                                             className="flex-grow border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 mr-2 p-2 text-sm"
                                             placeholder="Supplier Name"
+                                            disabled={isPaperExampleMode}
                                         />
                                         <button
                                             onClick={() => removeSupplier(s.id)}
-                                            className="bg-red-500 hover:bg-red-600 text-white p-2 rounded-md transition duration-300 ease-in-out text-sm"
+                                            className="bg-red-500 hover:bg-red-600 text-white p-2 rounded-md transition duration-300 ease-in-out text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                             title="Remove Supplier"
+                                            disabled={isPaperExampleMode}
                                         >
                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                                         </button>
@@ -771,7 +814,8 @@
                             </div>
                             <button
                                 onClick={addSupplier}
-                                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md transition duration-300 ease-in-out flex items-center justify-center"
+                                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md transition duration-300 ease-in-out flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={isPaperExampleMode}
                             >
                                 <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
                                 Add Supplier
@@ -794,11 +838,13 @@
                                                 onChange={(e) => handleCriterionChange(c.id, 'name', e.target.value, 'objective')}
                                                 className="flex-grow border-gray-300 rounded-md shadow-sm focus:ring-green-500 focus:border-green-500 mr-2 p-2 text-sm"
                                                 placeholder="Criterion Name"
+                                                disabled={isPaperExampleMode}
                                             />
                                             <button
                                                 onClick={() => removeCriterion(c.id, 'objective')}
-                                                className="bg-red-500 hover:bg-red-600 text-white p-2 rounded-md transition duration-300 ease-in-out text-sm"
+                                                className="bg-red-500 hover:bg-red-600 text-white p-2 rounded-md transition duration-300 ease-in-out text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                                 title="Remove Criterion"
+                                                disabled={isPaperExampleMode}
                                             >
                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                                             </button>
@@ -813,6 +859,7 @@
                                                     value="benefit"
                                                     checked={c.type === 'benefit'}
                                                     onChange={() => handleCriterionChange(c.id, 'type', 'benefit', 'objective')}
+                                                    disabled={isPaperExampleMode}
                                                 />
                                                 <span className="ml-1">Benefit (Higher is Better)</span>
                                             </label>
@@ -824,6 +871,7 @@
                                                     value="cost"
                                                     checked={c.type === 'cost'}
                                                     onChange={() => handleCriterionChange(c.id, 'type', 'cost', 'objective')}
+                                                    disabled={isPaperExampleMode}
                                                 />
                                                 <span className="ml-1">Cost (Lower is Better)</span>
                                             </label>
@@ -833,7 +881,8 @@
                             </div>
                             <button
                                 onClick={() => addCriterion('objective')}
-                                className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md transition duration-300 ease-in-out flex items-center justify-center"
+                                className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md transition duration-300 ease-in-out flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={isPaperExampleMode}
                             >
                                 <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
                                 Add Objective Criterion
@@ -856,11 +905,13 @@
                                                 onChange={(e) => handleCriterionChange(c.id, 'name', e.target.value, 'subjectiveRating')}
                                                 className="flex-grow border-gray-300 rounded-md shadow-sm focus:ring-purple-500 focus:border-purple-500 mr-2 p-2 text-sm"
                                                 placeholder="Criterion Name"
+                                                disabled={isPaperExampleMode}
                                             />
                                             <button
                                                 onClick={() => removeCriterion(c.id, 'subjectiveRating')}
-                                                className="bg-red-500 hover:bg-red-600 text-white p-2 rounded-md transition duration-300 ease-in-out text-sm"
+                                                className="bg-red-500 hover:bg-red-600 text-white p-2 rounded-md transition duration-300 ease-in-out text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                                 title="Remove Criterion"
+                                                disabled={isPaperExampleMode}
                                             >
                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                                             </button>
@@ -875,6 +926,7 @@
                                                     value="benefit"
                                                     checked={c.type === 'benefit'}
                                                     onChange={() => handleCriterionChange(c.id, 'type', 'benefit', 'subjectiveRating')}
+                                                    disabled={isPaperExampleMode}
                                                 />
                                                 <span className="ml-1">Benefit (Higher is Better)</span>
                                             </label>
@@ -886,6 +938,7 @@
                                                     value="cost"
                                                     checked={c.type === 'cost'}
                                                     onChange={() => handleCriterionChange(c.id, 'type', 'cost', 'subjectiveRating')}
+                                                    disabled={isPaperExampleMode}
                                                 />
                                                 <span className="ml-1">Cost (Lower is Better)</span>
                                             </label>
@@ -895,7 +948,8 @@
                             </div>
                             <button
                                 onClick={() => addCriterion('subjectiveRating')}
-                                className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-md transition duration-300 ease-in-out flex items-center justify-center"
+                                className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-md transition duration-300 ease-in-out flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={isPaperExampleMode}
                             >
                                 <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
                                 Add Subjective Rating Criterion
@@ -910,14 +964,19 @@
                             </h2>
                             <p className="text-sm text-gray-600 mb-4">
                                 *This method uses a backend to perform a mathematically rigorous optimization for subjective weights.*
+                                <br />
+                                **Note:** Charts update after clicking this button and then "Calculate Supplier Scores".
                             </p>
+                            
+                            {/* Single Expert BWM Form */}
                             <div className="mb-4">
                                 <label htmlFor="best-criterion" className="block text-sm font-medium text-gray-700 mb-1">Select Best Criterion:</label>
                                 <select
                                     id="best-criterion"
                                     className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-red-500 focus:border-red-500 sm:text-sm rounded-md"
-                                    value={bestCriterionId}
-                                    onChange={(e) => setBestCriterionId(e.target.value)}
+                                    value={bwmComparisons.bestCriterionId}
+                                    onChange={(e) => handleBWMComparisonChange('bestCriterionId', e.target.value)}
+                                    disabled={isPaperExampleMode}
                                 >
                                     <option value="">-- Select --</option>
                                     {allCriteria.map(c => (
@@ -930,8 +989,9 @@
                                 <select
                                     id="worst-criterion"
                                     className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-red-500 focus:border-red-500 sm:text-sm rounded-md"
-                                    value={worstCriterionId}
-                                    onChange={(e) => setWorstCriterionId(e.target.value)}
+                                    value={bwmComparisons.worstCriterionId}
+                                    onChange={(e) => handleBWMComparisonChange('worstCriterionId', e.target.value)}
+                                    disabled={isPaperExampleMode}
                                 >
                                     <option value="">-- Select --</option>
                                     {allCriteria.map(c => (
@@ -940,21 +1000,21 @@
                                 </select>
                             </div>
 
-                            {bestCriterionId && (
-                                <div className="mb-4 p-4 bg-red-100 rounded-md">
-                                    <h3 className="text-lg font-semibold text-red-700 mb-2">Best-to-Others Comparisons (1-9 Scale)</h3>
-                                    <p className="text-sm text-gray-600 mb-3">How much more important is the Best Criterion ({allCriteria.find(c => c.id === bestCriterionId)?.name}) compared to others?</p>
+                            {bwmComparisons.bestCriterionId && (
+                                <div className="mb-4 p-3 bg-red-200 rounded-md">
+                                    <h3 className="text-md font-semibold text-red-800 mb-2">Best-to-Others Comparisons</h3>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                        {allCriteria.filter(c => c.id !== bestCriterionId).map(c => (
+                                        {allCriteria.filter(c => c.id !== bwmComparisons.bestCriterionId).map(c => (
                                             <div key={c.id} className="flex items-center justify-between bg-white p-2 rounded-md shadow-sm">
                                                 <label className="text-sm text-gray-700 mr-2">{c.name}:</label>
                                                 <input
                                                     type="number"
                                                     min="1"
                                                     max="9"
-                                                    value={bestToOthersComparisons[c.id] || 1}
+                                                    value={bwmComparisons.bestToOthers[c.id] || 1}
                                                     onChange={(e) => handleBestToOthersChange(c.id, e.target.value)}
-                                                    className="w-20 border-gray-300 rounded-md shadow-sm focus:ring-red-500 focus:border-red-500 p-1 text-sm text-center"
+                                                    className="w-20 border-gray-300 rounded-md shadow-sm p-1 text-sm text-center"
+                                                    disabled={isPaperExampleMode}
                                                 />
                                             </div>
                                         ))}
@@ -962,21 +1022,21 @@
                                 </div>
                             )}
 
-                            {worstCriterionId && (
-                                <div className="mb-4 p-4 bg-red-100 rounded-md">
-                                    <h3 className="text-lg font-semibold text-red-700 mb-2">Others-to-Worst Comparisons (1-9 Scale)</h3>
-                                    <p className="text-sm text-gray-600 mb-3">How much more important are other criteria compared to the Worst Criterion ({allCriteria.find(c => c.id === worstCriterionId)?.name})?</p>
+                            {bwmComparisons.worstCriterionId && (
+                                <div className="p-3 bg-red-200 rounded-md">
+                                    <h3 className="text-md font-semibold text-red-800 mb-2">Others-to-Worst Comparisons</h3>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                        {allCriteria.filter(c => c.id !== worstCriterionId).map(c => (
+                                        {allCriteria.filter(c => c.id !== bwmComparisons.worstCriterionId).map(c => (
                                             <div key={c.id} className="flex items-center justify-between bg-white p-2 rounded-md shadow-sm">
                                                 <label className="text-sm text-gray-700 mr-2">{c.name}:</label>
                                                 <input
                                                     type="number"
                                                     min="1"
                                                     max="9"
-                                                    value={othersToWorstComparisons[c.id] || 1}
+                                                    value={bwmComparisons.othersToWorst[c.id] || 1}
                                                     onChange={(e) => handleOthersToWorstChange(c.id, e.target.value)}
-                                                    className="w-20 border-gray-300 rounded-md shadow-sm focus:ring-red-500 focus:border-red-500 p-1 text-sm text-center"
+                                                    className="w-20 border-gray-300 rounded-md shadow-sm p-1 text-sm text-center"
+                                                    disabled={isPaperExampleMode}
                                                 />
                                             </div>
                                         ))}
@@ -986,8 +1046,8 @@
 
                             <button
                                 onClick={calculateBWMWeights}
-                                disabled={isCalculatingBWM}
-                                className={`w-full ${isCalculatingBWM ? 'bg-gray-400 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'} text-white font-bold py-2 px-4 rounded-md transition duration-300 ease-in-out flex items-center justify-center`}
+                                disabled={isCalculatingBWM || isPaperExampleMode}
+                                className={`w-full mt-4 ${isCalculatingBWM || isPaperExampleMode ? 'bg-gray-400 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'} text-white font-bold py-2 px-4 rounded-md transition duration-300 ease-in-out flex items-center justify-center`}
                             >
                                 {isCalculatingBWM ? (
                                     <>
@@ -995,7 +1055,7 @@
                                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                         </svg>
-                                        Calculating BWM Weights...
+                                        Calculating Subjective Weights...
                                     </>
                                 ) : (
                                     <>
@@ -1004,7 +1064,7 @@
                                     </>
                                 )}
                             </button>
-                            {Object.keys(bwmCalculatedSubjectiveWeights).length > 0 && (
+                            {Object.keys(bwmCalculatedSubjectiveWeights).length > 0 && !isPaperExampleMode && (
                                 <div className="mt-4 p-3 bg-red-100 rounded-md">
                                     <h3 className="text-lg font-semibold text-red-700 mb-2">Calculated Subjective Weights:</h3>
                                     <ul className="list-disc list-inside text-gray-700">
@@ -1015,6 +1075,7 @@
                                 </div>
                             )}
                         </div>
+
 
                         {/* Objective Data Input Table */}
                         <div className="mb-8 p-6 bg-yellow-50 rounded-lg shadow-inner overflow-x-auto">
@@ -1044,6 +1105,7 @@
                                                             onChange={(e) => handleObjectiveDataChange(s.id, c.id, e.target.value)}
                                                             className="w-24 border-gray-300 rounded-md shadow-sm focus:ring-yellow-500 focus:border-yellow-500 p-2 text-sm text-center"
                                                             placeholder="Value"
+                                                            disabled={isPaperExampleMode}
                                                         />
                                                     </td>
                                                 ))}
@@ -1057,7 +1119,7 @@
                         {/* Calculation Trigger */}
                         <div className="text-center mb-8">
                             <button
-                                onClick={calculateAllRankings}
+                                onClick={calculateScores}
                                 className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-8 rounded-md shadow-lg transform transition duration-300 ease-in-out hover:scale-105"
                             >
                                 Calculate Supplier Scores
@@ -1065,40 +1127,74 @@
                         </div>
 
                         {/* Results Section */}
-                        {gapsResults && mabacResults && ( // Ensure both sets of results are available
+                        {results && (
                             <div id="results-section" className="p-6 bg-blue-50 rounded-lg shadow-inner">
                                 <h2 className="text-2xl font-semibold text-blue-800 mb-4 flex items-center">
                                     <svg className="w-6 h-6 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                                     Calculation Results
                                 </h2>
+                                {isPaperExampleMode && (
+                                    <p className="text-sm text-blue-700 mb-4">
+                                        *Results based on data and weights from the research paper (Tables A1, 9, 11, 12).*
+                                    </p>
+                                )}
+                                
+                                {/* Weights for MABAC Example */}
+                                {isPaperExampleMode && currentMethod === 'MABAC' && (
+                                    <div className="mb-4 p-3 bg-teal-100 rounded-md">
+                                        <h3 className="text-lg font-semibold text-teal-700 mb-2">MABAC Weight Scenario:</h3>
+                                        <div className="flex items-center space-x-4">
+                                            <label className="inline-flex items-center">
+                                                <input
+                                                    type="radio"
+                                                    className="form-radio text-teal-600"
+                                                    name="mabacWeightScenario"
+                                                    value="expert1"
+                                                    checked={mabacWeightScenarioId === 'expert1'}
+                                                    onChange={(e) => {
+                                                        setMabacWeightScenarioId(e.target.value);
+                                                        setResults(null);
+                                                    }}
+                                                />
+                                                <span className="ml-1 text-sm text-gray-700">Expert 1 (PT Most Important)</span>
+                                            </label>
+                                            <label className="inline-flex items-center">
+                                                <input
+                                                    type="radio"
+                                                    className="form-radio text-teal-600"
+                                                    name="mabacWeightScenario"
+                                                    value="expert2"
+                                                    checked={mabacWeightScenarioId === 'expert2'}
+                                                    onChange={(e) => {
+                                                        setMabacWeightScenarioId(e.target.value);
+                                                        setResults(null);
+                                                    }}
+                                                />
+                                                <span className="ml-1 text-sm text-gray-700">Expert 2 (FM Most Important)</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                )}
 
-                                {/* Ranking Method Selector */}
-                                <div className="mb-6 p-4 bg-gray-100 rounded-md flex items-center justify-center">
-                                    <label htmlFor="ranking-method-select" className="block text-lg font-medium text-gray-800 mr-4">Select Ranking Method:</label>
-                                    <select
-                                        id="ranking-method-select"
-                                        className="mt-1 block pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
-                                        value={activeRankingMethod}
-                                        onChange={(e) => setActiveRankingMethod(e.target.value)}
-                                    >
-                                        <option value="GAPS">GAPS (Paper 1)</option>
-                                        <option value="MABAC">MABAC (Paper 2)</option>
-                                    </select>
-                                </div>
 
                                 {/* Supplier Ranking */}
-                                <h3 className="text-xl font-medium text-blue-700 mb-3 mt-6">Supplier Ranking ({activeRankingMethod} Score)</h3>
+                                <h3 className="text-xl font-medium text-blue-700 mb-3 mt-6">Supplier Ranking ({results.method === 'GAPS' ? 'GAPS' : 'APS'} Score)</h3>
+                                {results.supplierScores.length > 0 && (
+                                    <h4 className="text-xl font-semibold text-green-700 mb-4">
+                                        The best performing supplier is: {results.supplierScores[0].name}
+                                    </h4>
+                                )}
                                 <div className="overflow-x-auto mb-6">
                                     <table className="min-w-full bg-white rounded-md shadow-sm">
                                         <thead>
                                             <tr className="bg-blue-100 text-blue-900 uppercase text-sm leading-normal">
                                                 <th className="py-3 px-6 text-left rounded-tl-md">Rank</th>
                                                 <th className="py-3 px-6 text-left">Supplier</th>
-                                                <th className="py-3 px-6 text-right rounded-tr-md">{activeRankingMethod} Score</th>
+                                                <th className="py-3 px-6 text-right rounded-tr-md">{results.method === 'GAPS' ? 'GAPS' : 'APS'} Score</th>
                                             </tr>
                                         </thead>
                                         <tbody className="text-gray-700 text-sm">
-                                            {currentResults.supplierScores.map((s, index) => (
+                                            {results.supplierScores.map((s, index) => (
                                                 <tr key={s.id} className="border-b border-gray-200 hover:bg-gray-50">
                                                     <td className="py-3 px-6 text-left font-bold">{index + 1}</td>
                                                     <td className="py-3 px-6 text-left">{s.name}</td>
@@ -1109,7 +1205,7 @@
                                     </table>
                                 </div>
 
-                                {/* Weights Breakdown - These are common for both GAPS and MABAC as they come from BWM and Entropy */}
+                                {/* Weights Breakdown */}
                                 <h3 className="text-xl font-medium text-blue-700 mb-3 mt-6">Criteria Weights</h3>
                                 <div className="overflow-x-auto mb-6">
                                     <table className="min-w-full bg-white rounded-md shadow-sm">
@@ -1118,217 +1214,70 @@
                                                 <th className="py-3 px-6 text-left rounded-tl-md">Criterion</th>
                                                 <th className="py-3 px-6 text-right">Objective Weight</th>
                                                 <th className="py-3 px-6 text-right">Subjective Weight</th>
-                                                <th className="py-3 px-6 text-right rounded-tr-md">Integrated Weight</th>
+                                                <th className="py-3 px-6 text-right">Integrated Weight</th>
                                             </tr>
                                         </thead>
                                         <tbody className="text-gray-700 text-sm">
                                             {allCriteria.map(c => (
                                                 <tr key={c.id} className="border-b border-gray-200 hover:bg-gray-50">
-                                                    <td className="py-3 px-6 text-left">{currentResults.integratedWeights[c.id] ? c.name : 'N/A'}</td>
-                                                    <td className="py-3 px-6 text-right">{currentResults.objectiveWeights[c.id]?.toFixed(4)}</td>
-                                                    <td className="py-3 px-6 text-right">{currentResults.subjectiveWeights[c.id]?.toFixed(4)}</td>
-                                                    <td className="py-3 px-6 text-right font-bold">{currentResults.integratedWeights[c.id]?.toFixed(4)}</td>
+                                                    <td className="py-3 px-6 text-left">{c.name}</td>
+                                                    <td className="py-3 px-6 text-right">{results.objectiveWeights[c.id]?.toFixed(4)}</td>
+                                                    <td className="py-3 px-6 text-right">{results.subjectiveWeights[c.id]?.toFixed(4)}</td>
+                                                    <td className="py-3 px-6 text-right font-bold">{results.integratedWeights[c.id]?.toFixed(4)}</td>
                                                 </tr>
                                             ))}
                                         </tbody>
                                     </table>
                                 </div>
 
-                                {/* Normalized Data (Paper 2 style used for both, for simplicity of charts) */}
-                                <h3 className="text-xl font-medium text-blue-700 mb-3 mt-6">Normalized Data (Ẑ)</h3>
-                                <div className="overflow-x-auto mb-6">
-                                    <table className="min-w-full bg-white rounded-md shadow-sm">
-                                        <thead>
-                                            <tr className="bg-blue-100 text-blue-900 uppercase text-sm leading-normal">
-                                                <th className="py-3 px-6 text-left rounded-tl-md">Supplier</th>
-                                                {allCriteria.map(c => (
-                                                    <th key={c.id} className="py-3 px-6 text-center">{c.name}</th>
-                                                ))}
-                                            </tr>
-                                        </thead>
-                                        <tbody className="text-gray-700 text-sm">
-                                            {suppliers.map(s => (
-                                                <tr key={s.id} className="border-b border-gray-200 hover:bg-gray-50">
-                                                    <td className="py-3 px-6 text-left whitespace-nowrap font-medium">{s.name}</td>
-                                                    {allCriteria.map(c => (
-                                                        <td key={c.id} className="py-3 px-6 text-center">
-                                                            {currentResults.normalizedMatrix[s.id]?.[c.id]?.toFixed(4)}
-                                                        </td>
-                                                    ))}
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-
-                                {/* Weighted Normalized Data (Z for GAPS, Y for MABAC) */}
-                                <h3 className="text-xl font-medium text-blue-700 mb-3 mt-6">Weighted Normalized Data ({activeRankingMethod === 'GAPS' ? 'Z Matrix' : 'Y Matrix'})</h3>
-                                <div className="overflow-x-auto mb-6">
-                                    <table className="min-w-full bg-white rounded-md shadow-sm">
-                                        <thead>
-                                            <tr className="bg-blue-100 text-blue-900 uppercase text-sm leading-normal">
-                                                <th className="py-3 px-6 text-left rounded-tl-md">Supplier</th>
-                                                {allCriteria.map(c => (
-                                                    <th key={c.id} className="py-3 px-6 text-center">{c.name}</th>
-                                                ))}
-                                            </tr>
-                                        </thead>
-                                        <tbody className="text-gray-700 text-sm">
-                                            {suppliers.map(s => (
-                                                <tr key={s.id} className="border-b border-gray-200 hover:bg-gray-50">
-                                                    <td className="py-3 px-6 text-left whitespace-nowrap font-medium">{s.name}</td>
-                                                    {allCriteria.map(c => (
-                                                        <td key={c.id} className="py-3 px-6 text-center">
-                                                            {currentResults.weightedNormalizedMatrix[s.id]?.[c.id]?.toFixed(4)}
-                                                        </td>
-                                                    ))}
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                                {activeRankingMethod === 'MABAC' && currentResults.borderApproximationArea && (
-                                    <>
-                                        {/* Border Approximation Area (MABAC Only) */}
-                                        <h3 className="text-xl font-medium text-blue-700 mb-3 mt-6">Border Approximation Area (B)</h3>
-                                        <div className="overflow-x-auto mb-6">
-                                            <table className="min-w-full bg-white rounded-md shadow-sm">
-                                                <thead>
-                                                    <tr className="bg-blue-100 text-blue-900 uppercase text-sm leading-normal">
-                                                        {allCriteria.map(c => (
-                                                            <th key={c.id} className="py-3 px-6 text-center rounded-t-md">{c.name}</th>
-                                                        ))}
-                                                    </tr>
-                                                </thead>
-                                                <tbody className="text-gray-700 text-sm">
-                                                    <tr className="border-b border-gray-200 hover:bg-gray-50">
-                                                        {allCriteria.map(c => (
-                                                            <td key={c.id} className="py-3 px-6 text-center">
-                                                                {currentResults.borderApproximationArea[c.id]?.toFixed(4)}
-                                                            </td>
-                                                        ))}
-                                                    </tr>
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </>
+                                {/* Dynamic Charts */}
+                                <h3 className="text-xl font-medium text-blue-700 mb-3 mt-6">Individual Supplier Performance Charts</h3>
+                                <p className="text-sm text-gray-600 mb-4">
+                                    These charts visualize each supplier's performance across criteria. Positive values indicate performance above average for that criterion, negative values indicate below average.
+                                </p>
+                                {results.method === 'GAPS' && (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                        {suppliers.map(s => (
+                                            <div key={`radar-${s.id}`} className="bg-white p-4 rounded-lg shadow-md flex flex-col items-center">
+                                                <h4 className="text-lg font-semibold text-gray-800 mb-2">{s.name}</h4>
+                                                <RadarChart
+                                                    supplierId={s.id}
+                                                    criteria={allCriteria}
+                                                    differenceMatrix={results.differenceMatrix}
+                                                />
+                                            </div>
+                                        ))}
+                                    </div>
                                 )}
-                                {activeRankingMethod === 'GAPS' && currentResults.geometricMeanMatrix && (
-                                    <>
-                                        {/* Geometric Mean per Criterion (GAPS Only) */}
-                                        <h3 className="text-xl font-medium text-blue-700 mb-3 mt-6">Geometric Mean per Criterion (G)</h3>
-                                        <div className="overflow-x-auto mb-6">
-                                            <table className="min-w-full bg-white rounded-md shadow-sm">
-                                                <thead>
-                                                    <tr className="bg-blue-100 text-blue-900 uppercase text-sm leading-normal">
-                                                        {allCriteria.map(c => (
-                                                            <th key={c.id} className="py-3 px-6 text-center rounded-t-md">{c.name}</th>
-                                                        ))}
-                                                    </tr>
-                                                </thead>
-                                                <tbody className="text-gray-700 text-sm">
-                                                    <tr className="border-b border-gray-200 hover:bg-gray-50">
-                                                        {allCriteria.map(c => (
-                                                            <td key={c.id} className="py-3 px-6 text-center">
-                                                                {currentResults.geometricMeanMatrix[c.id]?.toFixed(4)}
-                                                            </td>
-                                                        ))}
-                                                    </tr>
-                                                </tbody>
-                                            </table>
+                                {results.method === 'MABAC' && (
+                                    <div className="mt-6 p-4 bg-blue-100 rounded-lg shadow-inner">
+                                        <h4 className="text-lg font-semibold text-blue-700 mb-3">Visualize Performance by Criterion:</h4>
+                                        <div className="mb-4">
+                                            <label htmlFor="chart-criterion-select" className="block text-sm font-medium text-gray-700 mb-1">Select Criterion to Visualize:</label>
+                                            <select
+                                                id="chart-criterion-select"
+                                                className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                                                value={selectedCriterionForChart}
+                                                onChange={(e) => setSelectedCriterionForChart(e.target.value)}
+                                            >
+                                                <option value="">-- Select a Criterion --</option>
+                                                {allMabacCriteria.map(c => (
+                                                    <option key={c.id} value={c.id}>{c.name}</option>
+                                                ))}
+                                            </select>
                                         </div>
-                                    </>
+                                        {selectedCriterionForChart && (
+                                            <HorizontalBarChartAcrossSuppliers
+                                                selectedCriterionId={selectedCriterionForChart}
+                                                allSuppliers={suppliers}
+                                                allCriteria={allCriteria}
+                                                gammaMatrix={results.gammaMatrix}
+                                                chartTitle={`Performance for ${allCriteria.find(c => c.id === selectedCriterionForChart)?.name}`}
+                                            />
+                                        )}
+                                    </div>
                                 )}
 
-                                {/* Difference Matrix (H for GAPS, Gamma for MABAC) */}
-                                <h3 className="text-xl font-medium text-blue-700 mb-3 mt-6">Difference Matrix ({activeRankingMethod === 'GAPS' ? 'H = Z - G' : 'Γ = Y - B'})</h3>
-                                <div className="overflow-x-auto mb-6">
-                                    <table className="min-w-full bg-white rounded-md shadow-sm">
-                                        <thead>
-                                            <tr className="bg-blue-100 text-blue-900 uppercase text-sm leading-normal">
-                                                <th className="py-3 px-6 text-left rounded-tl-md">Supplier</th>
-                                                {allCriteria.map(c => (
-                                                    <th key={c.id} className="py-3 px-6 text-center">{c.name}</th>
-                                                ))}
-                                            </tr>
-                                        </thead>
-                                        <tbody className="text-gray-700 text-sm">
-                                            {suppliers.map(s => (
-                                                <tr key={s.id} className="border-b border-gray-200 hover:bg-gray-50">
-                                                    <td className="py-3 px-6 text-left whitespace-nowrap font-medium">{s.name}</td>
-                                                    {allCriteria.map(c => (
-                                                        <td key={c.id} className="py-3 px-6 text-center">
-                                                            {currentResults.differenceMatrix[s.id]?.[c.id]?.toFixed(4)}
-                                                        </td>
-                                                    ))}
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-
-                                {/* Individual Performance Chart Section */}
-                                <div className="mt-8 p-6 bg-indigo-50 rounded-lg shadow-inner">
-                                    <h3 className="text-xl font-medium text-indigo-700 mb-3 flex items-center">
-                                        <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 12l3-3m0 0l3 3m-3-3v6m-4-6h6"></path></svg>
-                                        Individual Criterion Performance (Bar Chart)
-                                    </h3>
-                                    <p className="text-sm text-gray-600 mb-4">
-                                        Visualize the performance score (difference from central point) of each supplier for a selected criterion, similar to Figures 7 and 8 in Paper 2.
-                                    </p>
-                                    <div className="mb-4">
-                                        <label htmlFor="select-criterion-bar" className="block text-sm font-medium text-gray-700 mb-1">Select Criterion:</label>
-                                        <select
-                                            id="select-criterion-bar"
-                                            className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
-                                            value={selectedCriterionForIndividualPerformance}
-                                            onChange={(e) => setSelectedCriterionForIndividualPerformance(e.target.value)}
-                                        >
-                                            <option value="">-- Select a Criterion --</option>
-                                            {allCriteria.map(c => (
-                                                <option key={c.id} value={c.id}>{c.name}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                    {selectedCriterionForIndividualPerformance && (
-                                        <div className="relative h-96">
-                                            <canvas ref={individualPerformanceChartRef}></canvas>
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Radar Chart Section */}
-                                <div className="mt-8 p-6 bg-orange-50 rounded-lg shadow-inner">
-                                    <h3 className="text-xl font-medium text-orange-700 mb-3 flex items-center">
-                                        <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                                        Supplier Performance Profile (Radar Chart)
-                                    </h3>
-                                    <p className="text-sm text-gray-600 mb-4">
-                                        Visualize the weighted normalized performance of selected suppliers across all criteria, similar to Figures 9-15 in Paper 2. This uses the integrated weights.
-                                    </p>
-                                    <div className="mb-4">
-                                        <label htmlFor="select-suppliers-radar" className="block text-sm font-medium text-gray-700 mb-1">Select Suppliers (hold Ctrl/Cmd to select multiple):</label>
-                                        <select
-                                            id="select-suppliers-radar"
-                                            multiple
-                                            className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-orange-500 focus:border-orange-500 sm:text-sm rounded-md h-32"
-                                            value={selectedSuppliersForRadarChart}
-                                            onChange={(e) => {
-                                                const options = Array.from(e.target.selectedOptions);
-                                                setSelectedSuppliersForRadarChart(options.map(option => option.value));
-                                            }}
-                                        >
-                                            {suppliers.map(s => (
-                                                <option key={s.id} value={s.id}>{s.name}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                    {selectedSuppliersForRadarChart.length > 0 && (
-                                        <div className="relative h-96">
-                                            <canvas ref={radarChartRef}></canvas>
-                                        </div>
-                                    )}
-                                </div>
 
                                 {/* PDF Export Button */}
                                 <div className="text-center mt-8">
@@ -1349,6 +1298,182 @@
             );
         };
 
+        const RadarChart = ({ supplierId, criteria, differenceMatrix }) => {
+            const chartRef = React.useRef(null);
+            const chartInstanceRef = React.useRef(null);
+
+            React.useEffect(() => {
+                if (!chartRef.current || !window.Chart) return;
+
+                if (chartInstanceRef.current) {
+                    chartInstanceRef.current.destroy();
+                }
+
+                const labels = criteria.map(c => c.name);
+                const dataPoints = criteria.map(c => differenceMatrix[supplierId]?.[c.id] || 0);
+
+                const ctx = chartRef.current.getContext('2d');
+                chartInstanceRef.current = new window.Chart(ctx, {
+                    type: 'radar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Performance Score',
+                            data: dataPoints,
+                            backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                            borderColor: 'rgba(59, 130, 246, 1)',
+                            borderWidth: 1,
+                            pointBackgroundColor: 'rgba(59, 130, 246, 1)',
+                            pointBorderColor: '#fff',
+                            pointHoverBackgroundColor: '#fff',
+                            pointHoverBorderColor: 'rgba(59, 130, 246, 1)'
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            r: {
+                                angleLines: {
+                                    display: true
+                                },
+                                suggestedMin: -0.5,
+                                suggestedMax: 0.5,
+                                ticks: {
+                                    beginAtZero: true,
+                                    color: '#4b5563',
+                                },
+                                pointLabels: {
+                                    color: '#1f2937',
+                                    font: {
+                                        size: 10
+                                    }
+                                },
+                                grid: {
+                                    color: 'rgba(209, 213, 219, 0.5)'
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: false
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        let label = context.dataset.label || '';
+                                        if (label) {
+                                            label += ': ';
+                                        }
+                                        if (context.parsed.r !== null) {
+                                            label += context.parsed.r.toFixed(4);
+                                        }
+                                        return label;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+
+                return () => {
+                    if (chartInstanceRef.current) {
+                        chartInstanceRef.current.destroy();
+                        chartInstanceRef.current = null;
+                    }
+                };
+            }, [supplierId, criteria, differenceMatrix]);
+
+            return <canvas id={`radarChart-${supplierId}`} ref={chartRef}></canvas>;
+        };
+
+        const HorizontalBarChartAcrossSuppliers = ({ selectedCriterionId, allSuppliers, allCriteria, gammaMatrix, chartTitle }) => {
+            const chartRef = React.useRef(null);
+            const chartInstanceRef = React.useRef(null);
+
+            React.useEffect(() => {
+                if (!chartRef.current || !window.Chart || !selectedCriterionId || !gammaMatrix) return;
+
+                if (chartInstanceRef.current) {
+                    chartInstanceRef.current.destroy();
+                }
+
+                const labels = allSuppliers.map(s => s.name);
+                const dataPoints = allSuppliers.map(s => gammaMatrix[s.id]?.[selectedCriterionId] || 0);
+
+                const ctx = chartRef.current.getContext('2d');
+                chartInstanceRef.current = new window.Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: chartTitle,
+                            data: dataPoints,
+                            backgroundColor: dataPoints.map(val => val >= 0 ? 'rgba(75, 192, 192, 0.6)' : 'rgba(255, 99, 132, 0.6)'),
+                            borderColor: dataPoints.map(val => val >= 0 ? 'rgba(75, 192, 192, 1)' : 'rgba(255, 99, 132, 1)'),
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        indexAxis: 'y',
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                beginAtZero: false,
+                                min: -0.3,
+                                max: 0.5,
+                                ticks: {
+                                    color: '#4b5563'
+                                },
+                                grid: {
+                                    color: 'rgba(209, 213, 219, 0.5)'
+                                }
+                            },
+                            y: {
+                                ticks: {
+                                    color: '#1f2937'
+                                },
+                                grid: {
+                                    color: 'rgba(209, 213, 219, 0.5)'
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: false
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        let label = context.dataset.label || '';
+                                        if (label) {
+                                            label += ': ';
+                                        }
+                                        if (context.parsed.x !== null) {
+                                            label += context.parsed.x.toFixed(4);
+                                        }
+                                        return label;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+
+                return () => {
+                    if (chartInstanceRef.current) {
+                        chartInstanceRef.current.destroy();
+                        chartInstanceRef.current = null;
+                    }
+                };
+            }, [selectedCriterionId, allSuppliers, gammaMatrix, chartTitle]);
+
+            return <canvas id={`horizontalBarChart-${selectedCriterionId}`} ref={chartRef}></canvas>;
+        };
+
+
+        // Render the React App
         ReactDOM.render(<App />, document.getElementById('root'));
     </script>
 </body>
